@@ -1,15 +1,14 @@
 from fastapi import FastAPI, HTTPException, Query, Path, Depends
 from fastapi.middleware.cors import CORSMiddleware
-#from sqlalchemy import create_engine, text
-#from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy import create_engine, text  # 유지
+from sqlalchemy.orm import sessionmaker, Session  # 유지
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr
-from jose import jwt
-#from passlib.context import CryptContext
+# from jose import jwt  # 주석 처리
+# from passlib.context import CryptContext  # 주석 처리
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import os
-
 # 기존 앱 구조도 유지 (호환성)
 try:
     from app.api.api_v1.api import api_router
@@ -32,6 +31,7 @@ REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", 7))
 DATABASE_URL = os.getenv('DATABASE_URL')
 engine = create_engine(DATABASE_URL) if DATABASE_URL else None
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine) if engine else None
+
 
 def get_db():
     if not SessionLocal:
