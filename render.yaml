@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: myapp
+    env: python
+    pythonVersion: 3.12.7
+    buildCommand: CARGO_HOME=/tmp/cargo pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
