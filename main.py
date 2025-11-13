@@ -8,12 +8,12 @@ from dotenv import load_dotenv
 import os
 
 # 기존 앱 구조도 유지 (호환성)
-try:
-    from app.api.api_v1.api import api_router
-    from app.core.config import settings
-    HAS_APP_STRUCTURE = True
-except ImportError:
-    HAS_APP_STRUCTURE = False
+#try:
+    #from app.api.api_v1.api import api_router
+    #from app.core.config import settings
+    #HAS_APP_STRUCTURE = True
+#except ImportError:
+    #HAS_APP_STRUCTURE = False
 
 load_dotenv()
 
@@ -49,8 +49,8 @@ app.add_middleware(
 )
 
 # 기존 API 라우터 포함 (있다면)
-if HAS_APP_STRUCTURE:
-    app.include_router(api_router, prefix="/api/v1")
+#if HAS_APP_STRUCTURE:
+    #app.include_router(api_router, prefix="/api/v1")
 
 # ================================
 # Response Models
