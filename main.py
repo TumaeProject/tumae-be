@@ -330,8 +330,8 @@ def tutor_details(req: TutorDetailsRequest, db: Session = Depends(get_db)):
 
         # tutor_profiles 테이블에 데이터 삽입/업데이트
         db.execute(text("""
-            INSERT INTO tutor_profiles (user_id, education_level, hourly_rate_min, hourly_rate_max, created_at)
-            VALUES (:user_id, :education_level, :hourly_rate_min, :hourly_rate_max, NOW())
+            INSERT INTO tutor_profiles (user_id, hourly_rate_min, hourly_rate_max, created_at)
+            VALUES (:user_id, :hourly_rate_min, :hourly_rate_max, NOW())
             ON CONFLICT (user_id) 
             DO UPDATE SET 
                 education_level = :education_level,
