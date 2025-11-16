@@ -119,10 +119,14 @@ class TutorAvailability(BaseModel):
     weekday: int     # 0=Mon ~ 6=Sun
     time_band_id: int
 
+class TutorSubject(BaseModel):
+    subject_id: int
+    skill_level_id: int
+
+
 class TutorDetailsRequest(BaseModel):
     user_id: int
-    education_level: str
-    tutor_subjects: List[dict]       # {subject_id, skill_level_id}
+    tutor_subjects: List[TutorSubject]       # {subject_id, skill_level_id}
     tutor_lesson_types: List[int]
     tutor_availabilities: List[TutorAvailability]
     tutor_goals: List[int]
