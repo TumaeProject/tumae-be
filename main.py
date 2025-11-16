@@ -76,11 +76,24 @@ def create_refresh_token(data: dict):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 # ==========================================================
-# 🗃️ Fake DB (메모리 저장)
+# 🗃️ 데이터베이스 헬퍼 함수
 # ==========================================================
-fake_users = {}
-fake_tutor_details = {}
-fake_student_details = {}
+
+def get_user_by_email(db: Session, email: str):
+    """이메일로 사용자 조회"""
+    result = db.execute(
+        text("SELECT * FROM users WHERE email = :email"),
+        {"email": email}
+    )
+    return result.fetchone()
+
+def get_user_by_id(db: Session, user_id: int):
+    """ID로 사용자 조회"""
+    result = db.execute(
+        text("SELECT * FROM users WHERE id = :user_id"),
+        {"user_id": user_id}
+    )
+    return result.fetchone()
 
 # ==========================================================
 # 📌 Request/Response Models
@@ -195,147 +208,345 @@ class TutorDetailResponse(BaseModel):
 # 🚀 공통 회원가입 (User 생성)
 # ==========================================================
 @app.post("/auth/signup", status_code=status.HTTP_201_CREATED)
-def signup(user: SignupRequest):
+def signup(user: SignupRequest, db: Session = Depends(get_db)):
     """회원가입 - 기본 정보 등록"""
     
-    # 이메일 중복 체크
-    if user.email in fake_users:
-        raise HTTPException(409, "EMAIL_ALREADY_EXISTS")
+    try:
+        # 이메일 중복 체크
+        existing_user = get_user_by_email(db, user.email)
+        if existing_user:
+            raise HTTPException(409, "EMAIL_ALREADY_EXISTS")
 
-    if user.role not in ["student", "tutor"]:
-        raise HTTPException(400, "INVALID_ROLE")
+        if user.role not in ["student", "tutor"]:
+            raise HTTPException(400, "INVALID_ROLE")
 
-    if user.gender not in ["male", "female", "none"]:
-        raise HTTPException(400, "INVALID_GENDER")
+        if user.gender not in ["male", "female", "none"]:
+            raise HTTPException(400, "INVALID_GENDER")
 
-    user_id = len(fake_users) + 1
+        # 비밀번호 해시화
+        password_hash = hash_password(user.password)
 
-    # users 테이블에 한 줄 생성 (기본정보만)
-    fake_users[user.email] = {
-        "user_id": user_id,
-        "name": user.name,
-        "email": user.email,
-        "password_hash": hash_password(user.password),
-        "role": user.role,
-        "gender": user.gender,
-        "terms_agreed": user.terms_agreed,
-        "privacy_policy_agreed": user.privacy_policy_agreed,
-        "signup_status": "pending_profile",
-        "created_at": datetime.utcnow().isoformat()
-    }
-
-    return {
-        "message": "SUCCESS",
-        "data": {
-            "user_id": user_id,
+        # users 테이블에 삽입
+        result = db.execute(text("""
+            INSERT INTO users (name, email, password_hash, role, gender, terms_agreed, privacy_policy_agreed, signup_status, created_at)
+            VALUES (:name, :email, :password_hash, :role, :gender, :terms_agreed, :privacy_policy_agreed, 'pending_profile', NOW())
+            RETURNING id, email, role, signup_status
+        """), {
+            "name": user.name,
             "email": user.email,
+            "password_hash": password_hash,
             "role": user.role,
-            "signup_status": "pending_profile"
+            "gender": user.gender,
+            "terms_agreed": user.terms_agreed,
+            "privacy_policy_agreed": user.privacy_policy_agreed
+        })
+        
+        db.commit()
+        new_user = result.fetchone()
+
+        return {
+            "message": "SUCCESS",
+            "data": {
+                "user_id": new_user[0],
+                "email": new_user[1],
+                "role": new_user[2],
+                "signup_status": new_user[3]
+            }
         }
-    }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"회원가입 중 오류가 발생했습니다: {str(e)}")
 
 # ==========================================================
 # 🔐 로그인
 # ==========================================================
 @app.post("/auth/login", status_code=status.HTTP_200_OK)
-def login(data: LoginRequest):
+def login(data: LoginRequest, db: Session = Depends(get_db)):
     """로그인 - JWT 토큰 발급"""
     
-    user = fake_users.get(data.email)
-    if not user:
-        raise HTTPException(404, "USER_NOT_FOUND")
+    try:
+        # 사용자 조회
+        user = get_user_by_email(db, data.email)
+        if not user:
+            raise HTTPException(404, "USER_NOT_FOUND")
 
-    if not verify_password(data.password, user["password_hash"]):
-        raise HTTPException(401, "INVALID_CREDENTIALS")
+        # 비밀번호 검증
+        if not verify_password(data.password, user.password_hash):
+            raise HTTPException(401, "INVALID_CREDENTIALS")
 
-    # 프로필 미완성 상태
-    if user["signup_status"] == "pending_profile":
-        raise HTTPException(403, "INACTIVE_ACCOUNT")
+        # 프로필 미완성 상태 체크
+        if user.signup_status == "pending_profile":
+            raise HTTPException(403, "INACTIVE_ACCOUNT")
 
-    access_token = create_access_token({"sub": data.email})
-    refresh_token = create_refresh_token({"sub": data.email})
+        # JWT 토큰 생성
+        access_token = create_access_token({"sub": data.email})
+        refresh_token = create_refresh_token({"sub": data.email})
 
-    redirect_url = "/students" if user["role"] == "tutor" else "/tutors"
+        # 역할에 따른 리다이렉트 URL
+        redirect_url = "/students" if user.role == "tutor" else "/tutors"
 
-    return {
-        "message": "SUCCESS",
-        "data": {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "user": {
-                "user_id": user["user_id"],
-                "email": user["email"],
-                "name": user["name"],
-                "role": user["role"]
-            },
-            "redirect_url": redirect_url
+        return {
+            "message": "SUCCESS",
+            "data": {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "user": {
+                    "user_id": user.id,
+                    "email": user.email,
+                    "name": user.name,
+                    "role": user.role
+                },
+                "redirect_url": redirect_url
+            }
         }
-    }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"로그인 중 오류가 발생했습니다: {str(e)}")
 
 # ==========================================================
 # 🧑‍🏫 튜터 온보딩 (PATCH)
 # ==========================================================
 @app.patch("/auth/tutors/details", status_code=status.HTTP_200_OK)
-def tutor_details(req: TutorDetailsRequest):
+def tutor_details(req: TutorDetailsRequest, db: Session = Depends(get_db)):
     """튜터 상세 정보 등록"""
     
-    # user_id로 사용자 찾기
-    target_user = None
-    for u in fake_users.values():
-        if u["user_id"] == req.user_id:
-            target_user = u
-            break
+    try:
+        # 사용자 존재 및 권한 확인
+        user = get_user_by_id(db, req.user_id)
+        if not user:
+            raise HTTPException(404, "USER_NOT_FOUND")
 
-    if not target_user:
-        raise HTTPException(404, "USER_NOT_FOUND")
+        if user.role != "tutor":
+            raise HTTPException(403, "FORBIDDEN_ROLE")
 
-    if target_user["role"] != "tutor":
-        raise HTTPException(403, "FORBIDDEN_ROLE")
-
-    # 온보딩 정보 저장
-    fake_tutor_details[req.user_id] = req.model_dump()
-
-    # users.signup_status 갱신
-    target_user["signup_status"] = "active"
-
-    return {
-        "message": "SUCCESS",
-        "data": {
+        # tutor_profiles 테이블에 데이터 삽입/업데이트
+        db.execute(text("""
+            INSERT INTO tutor_profiles (user_id, education_level, hourly_rate_min, hourly_rate_max, created_at)
+            VALUES (:user_id, :education_level, :hourly_rate_min, :hourly_rate_max, NOW())
+            ON CONFLICT (user_id) 
+            DO UPDATE SET 
+                education_level = :education_level,
+                hourly_rate_min = :hourly_rate_min,
+                hourly_rate_max = :hourly_rate_max,
+                updated_at = NOW()
+        """), {
             "user_id": req.user_id,
-            "signup_status": "active"
+            "education_level": req.education_level,
+            "hourly_rate_min": req.hourly_rate_min,
+            "hourly_rate_max": req.hourly_rate_max
+        })
+
+        # 기존 과목, 수업방식, 목표, 실력수준, 가능시간 삭제
+        db.execute(text("DELETE FROM tutor_subjects WHERE tutor_id = :user_id"), {"user_id": req.user_id})
+        db.execute(text("DELETE FROM tutor_lesson_types WHERE tutor_id = :user_id"), {"user_id": req.user_id})
+        db.execute(text("DELETE FROM tutor_goals WHERE tutor_id = :user_id"), {"user_id": req.user_id})
+        db.execute(text("DELETE FROM tutor_skill_levels WHERE tutor_id = :user_id"), {"user_id": req.user_id})
+        db.execute(text("DELETE FROM tutor_availabilities WHERE tutor_id = :user_id"), {"user_id": req.user_id})
+
+        # 튜터 과목 저장
+        for subject in req.tutor_subjects:
+            db.execute(text("""
+                INSERT INTO tutor_subjects (tutor_id, subject_id, skill_level_id)
+                VALUES (:tutor_id, :subject_id, :skill_level_id)
+            """), {
+                "tutor_id": req.user_id,
+                "subject_id": subject.get("subject_id"),
+                "skill_level_id": subject.get("skill_level_id")
+            })
+
+        # 수업 방식 저장
+        for lesson_type_id in req.tutor_lesson_types:
+            db.execute(text("""
+                INSERT INTO tutor_lesson_types (tutor_id, lesson_type_id)
+                VALUES (:tutor_id, :lesson_type_id)
+            """), {
+                "tutor_id": req.user_id,
+                "lesson_type_id": lesson_type_id
+            })
+
+        # 가능 시간 저장
+        for availability in req.tutor_availabilities:
+            db.execute(text("""
+                INSERT INTO tutor_availabilities (tutor_id, weekday, time_band_id)
+                VALUES (:tutor_id, :weekday, :time_band_id)
+            """), {
+                "tutor_id": req.user_id,
+                "weekday": availability.weekday,
+                "time_band_id": availability.time_band_id
+            })
+
+        # 튜터 목표 저장
+        for goal_id in req.tutor_goals:
+            db.execute(text("""
+                INSERT INTO tutor_goals (tutor_id, goal_id)
+                VALUES (:tutor_id, :goal_id)
+            """), {
+                "tutor_id": req.user_id,
+                "goal_id": goal_id
+            })
+
+        # 튜터 실력 수준 저장
+        for skill_level_id in req.tutor_skill_levels:
+            db.execute(text("""
+                INSERT INTO tutor_skill_levels (tutor_id, skill_level_id)
+                VALUES (:tutor_id, :skill_level_id)
+            """), {
+                "tutor_id": req.user_id,
+                "skill_level_id": skill_level_id
+            })
+
+        # users.signup_status를 'active'로 업데이트
+        db.execute(text("""
+            UPDATE users 
+            SET signup_status = 'active', updated_at = NOW()
+            WHERE id = :user_id
+        """), {"user_id": req.user_id})
+
+        db.commit()
+
+        return {
+            "message": "SUCCESS",
+            "data": {
+                "user_id": req.user_id,
+                "signup_status": "active"
+            }
         }
-    }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"튜터 정보 저장 중 오류가 발생했습니다: {str(e)}")
 
 # ==========================================================
 # 👨‍🎓 학생 온보딩 (PATCH)
 # ==========================================================
 @app.patch("/auth/students/details", status_code=status.HTTP_200_OK)
-def student_details(req: StudentDetailsRequest):
+def student_details(req: StudentDetailsRequest, db: Session = Depends(get_db)):
     """학생 상세 정보 등록"""
     
-    target_user = None
-    for u in fake_users.values():
-        if u["user_id"] == req.user_id:
-            target_user = u
-            break
+    try:
+        # 사용자 존재 및 권한 확인
+        user = get_user_by_id(db, req.user_id)
+        if not user:
+            raise HTTPException(404, "USER_NOT_FOUND")
 
-    if not target_user:
-        raise HTTPException(404, "USER_NOT_FOUND")
+        if user.role != "student":
+            raise HTTPException(403, "FORBIDDEN_ROLE")
 
-    if target_user["role"] != "student":
-        raise HTTPException(403, "FORBIDDEN_ROLE")
-
-    fake_student_details[req.user_id] = req.model_dump()
-
-    target_user["signup_status"] = "active"
-
-    return {
-        "message": "SUCCESS",
-        "data": {
+        # student_profiles 테이블에 데이터 삽입/업데이트
+        db.execute(text("""
+            INSERT INTO student_profiles (user_id, preferred_price_min, preferred_price_max, created_at)
+            VALUES (:user_id, :preferred_price_min, :preferred_price_max, NOW())
+            ON CONFLICT (user_id) 
+            DO UPDATE SET 
+                preferred_price_min = :preferred_price_min,
+                preferred_price_max = :preferred_price_max,
+                updated_at = NOW()
+        """), {
             "user_id": req.user_id,
-            "signup_status": "active"
+            "preferred_price_min": req.preferred_price_min,
+            "preferred_price_max": req.preferred_price_max
+        })
+
+        # 기존 과목, 목표, 수업방식, 지역, 가능시간, 실력수준 삭제
+        db.execute(text("DELETE FROM student_subjects WHERE user_id = :user_id"), {"user_id": req.user_id})
+        db.execute(text("DELETE FROM student_goals WHERE user_id = :user_id"), {"user_id": req.user_id})
+        db.execute(text("DELETE FROM student_lesson_types WHERE user_id = :user_id"), {"user_id": req.user_id})
+        db.execute(text("DELETE FROM student_regions WHERE user_id = :user_id"), {"user_id": req.user_id})
+        db.execute(text("DELETE FROM student_availabilities WHERE user_id = :user_id"), {"user_id": req.user_id})
+        db.execute(text("DELETE FROM student_skill_levels WHERE user_id = :user_id"), {"user_id": req.user_id})
+
+        # 학생 과목 저장
+        for subject_id in req.student_subjects:
+            db.execute(text("""
+                INSERT INTO student_subjects (user_id, subject_id)
+                VALUES (:user_id, :subject_id)
+            """), {
+                "user_id": req.user_id,
+                "subject_id": subject_id
+            })
+
+        # 학생 목표 저장
+        for goal_id in req.student_goals:
+            db.execute(text("""
+                INSERT INTO student_goals (user_id, goal_id)
+                VALUES (:user_id, :goal_id)
+            """), {
+                "user_id": req.user_id,
+                "goal_id": goal_id
+            })
+
+        # 수업 방식 저장
+        for lesson_type_id in req.student_lesson_types:
+            db.execute(text("""
+                INSERT INTO student_lesson_types (user_id, lesson_type_id)
+                VALUES (:user_id, :lesson_type_id)
+            """), {
+                "user_id": req.user_id,
+                "lesson_type_id": lesson_type_id
+            })
+
+        # 지역 저장
+        for region_id in req.student_regions:
+            db.execute(text("""
+                INSERT INTO student_regions (user_id, region_id)
+                VALUES (:user_id, :region_id)
+            """), {
+                "user_id": req.user_id,
+                "region_id": region_id
+            })
+
+        # 가능 시간 저장
+        for availability in req.student_availabilities:
+            db.execute(text("""
+                INSERT INTO student_availabilities (user_id, weekday, time_band_id)
+                VALUES (:user_id, :weekday, :time_band_id)
+            """), {
+                "user_id": req.user_id,
+                "weekday": availability.weekday,
+                "time_band_id": availability.time_band_id
+            })
+
+        # 학생 실력 수준 저장
+        for skill_level_id in req.student_skill_levels:
+            db.execute(text("""
+                INSERT INTO student_skill_levels (user_id, skill_level_id)
+                VALUES (:user_id, :skill_level_id)
+            """), {
+                "user_id": req.user_id,
+                "skill_level_id": skill_level_id
+            })
+
+        # users.signup_status를 'active'로 업데이트
+        db.execute(text("""
+            UPDATE users 
+            SET signup_status = 'active', updated_at = NOW()
+            WHERE id = :user_id
+        """), {"user_id": req.user_id})
+
+        db.commit()
+
+        return {
+            "message": "SUCCESS",
+            "data": {
+                "user_id": req.user_id,
+                "signup_status": "active"
+            }
         }
-    }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"학생 정보 저장 중 오류가 발생했습니다: {str(e)}")
 
 # ==========================================================
 # 👨‍🎓 학생 찾기 APIs
