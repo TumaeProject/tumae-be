@@ -332,8 +332,7 @@ def tutor_details(req: TutorDetailsRequest, db: Session = Depends(get_db)):
             DO UPDATE SET 
                 education_level = :education_level,
                 hourly_rate_min = :hourly_rate_min,
-                hourly_rate_max = :hourly_rate_max,
-                updated_at = NOW()
+                hourly_rate_max = :hourly_rate_max
         """), {
             "user_id": req.user_id,
             "education_level": req.education_level,
@@ -403,7 +402,7 @@ def tutor_details(req: TutorDetailsRequest, db: Session = Depends(get_db)):
         # users.signup_status를 'active'로 업데이트
         db.execute(text("""
             UPDATE users 
-            SET signup_status = 'active', updated_at = NOW()
+            SET signup_status = 'active'
             WHERE id = :user_id
         """), {"user_id": req.user_id})
 
@@ -447,8 +446,7 @@ def student_details(req: StudentDetailsRequest, db: Session = Depends(get_db)):
             ON CONFLICT (user_id) 
             DO UPDATE SET 
                 preferred_price_min = :preferred_price_min,
-                preferred_price_max = :preferred_price_max,
-                updated_at = NOW()
+                preferred_price_max = :preferred_price_max
         """), {
             "user_id": req.user_id,
             "preferred_price_min": req.preferred_price_min,
@@ -527,7 +525,7 @@ def student_details(req: StudentDetailsRequest, db: Session = Depends(get_db)):
         # users.signup_status를 'active'로 업데이트
         db.execute(text("""
             UPDATE users 
-            SET signup_status = 'active', updated_at = NOW()
+            SET signup_status = 'active'
             WHERE id = :user_id
         """), {"user_id": req.user_id})
 
