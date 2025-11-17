@@ -356,8 +356,8 @@ def tutor_details(req: TutorDetailsRequest, db: Session = Depends(get_db)):
                 VALUES (:tutor_id, :subject_id, :skill_level_id)
             """), {
                 "tutor_id": req.user_id,
-                "subject_id": subject.get("subject_id"),
-                "skill_level_id": subject.get("skill_level_id")
+                "subject_id": subject.subject_id,      
+                "skill_level_id": subject.skill_level_id 
             })
 
         # 수업 방식 저장
