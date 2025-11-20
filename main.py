@@ -86,6 +86,7 @@ class TutorDetailsRequest(BaseModel):
     tutor_skill_levels: List[int]
     hourly_rate_min: int
     hourly_rate_max: int
+    tutor_regions: List[int]
 
 
 # --- 학생 온보딩 ---
