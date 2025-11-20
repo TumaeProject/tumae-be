@@ -151,11 +151,7 @@ class StudentDetailsRequest(BaseModel):
     preferred_price_min: int
     preferred_price_max: int
     student_skill_levels: List[int]
-<<<<<<< HEAD
     student_age_id: int  # 단일 선택
-=======
-    student_age: int
->>>>>>> b3c1f41ce9334d18c30ade9ca411db53d059ad63
 
 # --- 학생 검색 응답 ---
 class StudentListResponse(BaseModel):
@@ -960,23 +956,6 @@ async def get_tutor_detail(
 # ==========================================================
 # 🍀 헬스체크
 # ==========================================================
-# ==========================================================
-# 📚 마스터 데이터 조회 API
-# ==========================================================
-@app.get("/api/student-ages")
-def get_student_ages(db: Session = Depends(get_db)):
-    """학생 연령대 목록 조회"""
-    try:
-        result = db.execute(text("SELECT id, name FROM student_age ORDER BY id"))
-        ages = result.fetchall()
-        
-        return {
-            "message": "SUCCESS",
-            "data": [{"id": age[0], "name": age[1]} for age in ages]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"연령대 조회 중 오류: {str(e)}")
-
 # ==========================================================
 # 🏠 루트
 # ==========================================================
