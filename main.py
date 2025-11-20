@@ -126,6 +126,7 @@ class TutorSubject(BaseModel):
 
 class TutorDetailsRequest(BaseModel):
     user_id: int
+    education_level: str
     tutor_subjects: List[TutorSubject]       # {subject_id, skill_level_id}
     tutor_lesson_types: List[int]
     tutor_availabilities: List[TutorAvailability]
@@ -330,14 +331,16 @@ def tutor_details(req: TutorDetailsRequest, db: Session = Depends(get_db)):
 
         # tutor_profiles 테이블에 데이터 삽입/업데이트
         db.execute(text("""
-            INSERT INTO tutor_profiles (user_id, hourly_rate_min, hourly_rate_max, created_at)
-            VALUES (:user_id, :hourly_rate_min, :hourly_rate_max, NOW())
+            INSERT INTO tutor_profiles (user_id, education_level, hourly_rate_min, hourly_rate_max, created_at)
+            VALUES (:user_id, :education_level, :hourly_rate_min, :hourly_rate_max, NOW())
             ON CONFLICT (user_id) 
             DO UPDATE SET 
+                education_level = :education_level,
                 hourly_rate_min = :hourly_rate_min,
                 hourly_rate_max = :hourly_rate_max
         """), {
             "user_id": req.user_id,
+            "education_level": req.education_level,
             "hourly_rate_min": req.hourly_rate_min,
             "hourly_rate_max": req.hourly_rate_max
         })
