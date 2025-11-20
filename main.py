@@ -151,6 +151,7 @@ class StudentDetailsRequest(BaseModel):
     preferred_price_min: int
     preferred_price_max: int
     student_skill_levels: List[int]
+    student_age: int
 
 # --- 학생 검색 응답 ---
 class StudentListResponse(BaseModel):
