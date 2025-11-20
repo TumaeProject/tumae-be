@@ -134,7 +134,8 @@ class TutorDetailsRequest(BaseModel):
     tutor_skill_levels: List[int]
     hourly_rate_min: int
     hourly_rate_max: int
-
+    tutor_regions: List[int]
+    
 # --- 학생 온보딩 ---
 class StudentAvailability(BaseModel):
     weekday: int
@@ -150,6 +151,7 @@ class StudentDetailsRequest(BaseModel):
     preferred_price_min: int
     preferred_price_max: int
     student_skill_levels: List[int]
+    student_age_id: int  # 단일 선택
 
 # --- 학생 검색 응답 ---
 class StudentListResponse(BaseModel):
@@ -446,14 +448,16 @@ def student_details(req: StudentDetailsRequest, db: Session = Depends(get_db)):
 
         # student_profiles 테이블에 데이터 삽입/업데이트
         db.execute(text("""
-            INSERT INTO student_profiles (user_id, preferred_price_min, preferred_price_max, created_at)
-            VALUES (:user_id, :preferred_price_min, :preferred_price_max, NOW())
+            INSERT INTO student_profiles (user_id, age_id, preferred_price_min, preferred_price_max, created_at)
+            VALUES (:user_id, :age_id, :preferred_price_min, :preferred_price_max, NOW())
             ON CONFLICT (user_id) 
             DO UPDATE SET 
+                age_id = :age_id,
                 preferred_price_min = :preferred_price_min,
                 preferred_price_max = :preferred_price_max
         """), {
             "user_id": req.user_id,
+            "age_id": req.student_age_id,
             "preferred_price_min": req.preferred_price_min,
             "preferred_price_max": req.preferred_price_max
         })
@@ -951,6 +955,26 @@ async def get_tutor_detail(
 
 # ==========================================================
 # 🍀 헬스체크
+# ==========================================================
+# ==========================================================
+# 📚 마스터 데이터 조회 API
+# ==========================================================
+@app.get("/api/student-ages")
+def get_student_ages(db: Session = Depends(get_db)):
+    """학생 연령대 목록 조회"""
+    try:
+        result = db.execute(text("SELECT id, name FROM student_age ORDER BY id"))
+        ages = result.fetchall()
+        
+        return {
+            "message": "SUCCESS",
+            "data": [{"id": age[0], "name": age[1]} for age in ages]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"연령대 조회 중 오류: {str(e)}")
+
+# ==========================================================
+# 🏠 루트
 # ==========================================================
 @app.get("/")
 def root():
