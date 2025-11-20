@@ -104,7 +104,7 @@ class StudentDetailsRequest(BaseModel):
     preferred_price_min: int
     preferred_price_max: int
     student_skill_levels: List[int]
-    student_age: int
+    age_id: int
     
 
 # ==========================================================
