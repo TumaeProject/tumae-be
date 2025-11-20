@@ -104,7 +104,8 @@ class StudentDetailsRequest(BaseModel):
     preferred_price_min: int
     preferred_price_max: int
     student_skill_levels: List[int]
-
+    student_age: int
+    
 
 # ==========================================================
 # 🚀 공통 회원가입 (User 생성)
