@@ -570,53 +570,68 @@ async def get_nearby_students(
 ):
     """
     튜터 위치 기준 반경 내 학생 검색
-    PostGIS의 ST_DWithin 함수 사용
+    latitude/longitude 사용 (Haversine 공식)
     """
+    from math import radians, sin, cos, sqrt, atan2
     
     # 튜터의 대표 지역 좌표 조회
     tutor_location = db.execute(text("""
-        SELECT r.geom
+        SELECT r.latitude, r.longitude
         FROM tutor_regions tr
         JOIN regions r ON tr.region_id = r.id
         WHERE tr.tutor_id = :user_id
-        AND r.geom IS NOT NULL
+        AND r.latitude IS NOT NULL
+        AND r.longitude IS NOT NULL
         LIMIT 1
     """), {'user_id': user_id}).fetchone()
     
     if not tutor_location:
         raise HTTPException(status_code=404, detail="튜터의 위치 정보가 없습니다.")
     
-    # 반경 내 학생 검색
-    students = db.execute(text("""
+    tutor_lat, tutor_lng = float(tutor_location[0]), float(tutor_location[1])
+    
+    # 모든 학생 지역 조회
+    student_regions = db.execute(text("""
         SELECT DISTINCT
             u.id, u.name, u.email,
-            (ST_Distance(
-                ST_Transform(:tutor_geom::geometry, 5179),
-                ST_Transform(r.geom, 5179)
-            ) / 1000.0)::NUMERIC(10,2) as distance_km
+            r.latitude, r.longitude
         FROM users u
         JOIN student_regions sr ON sr.user_id = u.id
         JOIN regions r ON r.id = sr.region_id
         WHERE u.role = 'student'
         AND u.signup_status = 'active'
-        AND r.geom IS NOT NULL
-        AND ST_DWithin(
-            ST_Transform(:tutor_geom::geometry, 5179),
-            ST_Transform(r.geom, 5179),
-            :radius_meters
-        )
-        ORDER BY distance_km
-    """), {
-        'tutor_geom': str(tutor_location[0]),
-        'radius_meters': radius_km * 1000
-    }).fetchall()
+        AND r.latitude IS NOT NULL
+        AND r.longitude IS NOT NULL
+    """)).fetchall()
     
-    return [{
-        'id': s[0],
-        'name': s[1],
-        'email': s[2],
-        'distance_km': float(s[3])  # NUMERIC을 float으로 변환
-    } for s in students]
+    # Haversine 공식으로 거리 계산 및 필터링
+    nearby_students = []
+    R = 6371  # 지구 반지름 (km)
+    
+    for student_id, name, email, s_lat, s_lng in student_regions:
+        s_lat, s_lng = float(s_lat), float(s_lng)
+        
+        # 거리 계산
+        dlat = radians(s_lat - tutor_lat)
+        dlng = radians(s_lng - tutor_lng)
+        
+        a = sin(dlat/2)**2 + cos(radians(tutor_lat)) * cos(radians(s_lat)) * sin(dlng/2)**2
+        c = 2 * atan2(sqrt(a), sqrt(1-a))
+        distance_km = R * c
+        
+        # 반경 내에 있으면 추가
+        if distance_km <= radius_km:
+            nearby_students.append({
+                'id': student_id,
+                'name': name,
+                'email': email,
+                'distance_km': round(distance_km, 2)
+            })
+    
+    # 거리순 정렬
+    nearby_students.sort(key=lambda x: x['distance_km'])
+    
+    return nearby_students
 
 # ==========================================================
 # 🍀 헬스체크
