@@ -559,21 +559,47 @@ def student_details(req: StudentDetailsRequest, db: Session = Depends(get_db)):
 # 👨‍🎓 학생 찾기 APIs
 # ==========================================================
 
+
 @app.get("/api/students", response_model=List[StudentListResponse])
 async def get_students(
+    user_id: int = Query(..., description="튜터의 user_id"),
     db: Session = Depends(get_db),
-    subject: Optional[str] = Query(None, description="과목 필터 (예: 웹개발)"),
-    region: Optional[str] = Query(None, description="지역 필터 (예: 서울특별시)"),
-    price_min: Optional[int] = Query(None, description="최소 희망 시급"),
-    price_max: Optional[int] = Query(None, description="최대 희망 시급"),
-    skill_level: Optional[str] = Query(None, description="실력 수준 (예: 초급자)"),
-    goal: Optional[str] = Query(None, description="학습 목적 (예: 취업 준비)"),
-    lesson_type: Optional[str] = Query(None, description="수업 방식 (예: 1:1과외)"),
     limit: int = Query(20, description="결과 개수 제한"),
     offset: int = Query(0, description="결과 시작 위치")
 ):
-    """학생 목록 검색 - 튜터가 과외 요청한 학생들의 선호 스타일과 비슷한 학생을 보여줌"""
+    """학생 목록 검색 - 튜터의 프로필을 기반으로 매칭되는 학생들을 자동으로 필터링"""
     
+    # 1. 튜터가 실제로 존재하는지 확인
+    tutor_check = db.execute(text("""
+        SELECT id FROM users WHERE id = :user_id AND role = 'tutor'
+    """), {'user_id': user_id})
+    
+    if not tutor_check.fetchone():
+        raise HTTPException(status_code=404, detail="해당 튜터를 찾을 수 없습니다.")
+    
+    # 2. 튜터의 프로필 정보 조회
+    tutor_profile = db.execute(text("""
+        SELECT hourly_rate_min, hourly_rate_max FROM tutor_profiles WHERE user_id = :user_id
+    """), {'user_id': user_id})
+    tutor_data = tutor_profile.fetchone()
+    
+    # 3. 튜터의 과목, 지역, 수업방식 조회
+    tutor_subjects = db.execute(text("""
+        SELECT subject_id FROM tutor_subjects WHERE tutor_id = :user_id
+    """), {'user_id': user_id}).fetchall()
+    tutor_subject_ids = [row[0] for row in tutor_subjects]
+    
+    tutor_regions = db.execute(text("""
+        SELECT region_id FROM tutor_regions WHERE tutor_id = :user_id
+    """), {'user_id': user_id}).fetchall()
+    tutor_region_ids = [row[0] for row in tutor_regions]
+    
+    tutor_lesson_types = db.execute(text("""
+        SELECT lesson_type_id FROM tutor_lesson_types WHERE tutor_id = :user_id
+    """), {'user_id': user_id}).fetchall()
+    tutor_lesson_type_ids = [row[0] for row in tutor_lesson_types]
+    
+    # 4. 기본 쿼리 구성
     query = """
         SELECT DISTINCT
             u.id, u.name, u.email, u.created_at, u.signup_status,
@@ -585,52 +611,57 @@ async def get_students(
     
     params = {}
     
-    if subject:
-        query += " AND EXISTS (SELECT 1 FROM student_subjects ss JOIN subjects s ON ss.subject_id = s.id WHERE ss.user_id = u.id AND s.name = :subject)"
-        params['subject'] = subject
+    # 5. 튜터의 과목과 매칭되는 학생 필터링
+    if tutor_subject_ids:
+        placeholders = ','.join([f':subject_{i}' for i in range(len(tutor_subject_ids))])
+        query += f" AND EXISTS (SELECT 1 FROM student_subjects ss WHERE ss.user_id = u.id AND ss.subject_id IN ({placeholders}))"
+        for i, subject_id in enumerate(tutor_subject_ids):
+            params[f'subject_{i}'] = subject_id
     
-    if region:
-        query += " AND EXISTS (SELECT 1 FROM student_regions sr JOIN regions r ON sr.region_id = r.id WHERE sr.user_id = u.id AND (r.name = :region OR r.name LIKE :region_like))"
-        params['region'] = region
-        params['region_like'] = f"%{region}%"
+    # 6. 튜터의 지역과 매칭되는 학생 필터링
+    if tutor_region_ids:
+        placeholders = ','.join([f':region_{i}' for i in range(len(tutor_region_ids))])
+        query += f" AND EXISTS (SELECT 1 FROM student_regions sr WHERE sr.user_id = u.id AND sr.region_id IN ({placeholders}))"
+        for i, region_id in enumerate(tutor_region_ids):
+            params[f'region_{i}'] = region_id
     
-    if price_min:
-        query += " AND (sp.preferred_price_max IS NULL OR sp.preferred_price_max >= :price_min)"
-        params['price_min'] = price_min
+    # 7. 가격 범위 필터링 (튜터의 시급과 학생의 희망 시급이 겹치는 경우)
+    if tutor_data and tutor_data[0] and tutor_data[1]:
+        query += """
+            AND (
+                (sp.preferred_price_max IS NULL OR sp.preferred_price_max >= :tutor_rate_min)
+                AND (sp.preferred_price_min IS NULL OR sp.preferred_price_min <= :tutor_rate_max)
+            )
+        """
+        params['tutor_rate_min'] = tutor_data[0]
+        params['tutor_rate_max'] = tutor_data[1]
     
-    if price_max:
-        query += " AND (sp.preferred_price_min IS NULL OR sp.preferred_price_min <= :price_max)"
-        params['price_max'] = price_max
+    # 8. 수업 방식 필터링
+    if tutor_lesson_type_ids:
+        placeholders = ','.join([f':lesson_type_{i}' for i in range(len(tutor_lesson_type_ids))])
+        query += f" AND EXISTS (SELECT 1 FROM student_lesson_types slt WHERE slt.user_id = u.id AND slt.lesson_type_id IN ({placeholders}))"
+        for i, lesson_type_id in enumerate(tutor_lesson_type_ids):
+            params[f'lesson_type_{i}'] = lesson_type_id
     
-    if skill_level:
-        query += " AND EXISTS (SELECT 1 FROM student_skill_levels ssl JOIN skill_levels sl ON ssl.skill_level_id = sl.id WHERE ssl.user_id = u.id AND sl.name = :skill_level)"
-        params['skill_level'] = skill_level
-    
-    if goal:
-        query += " AND EXISTS (SELECT 1 FROM student_goals sg JOIN goals g ON sg.goal_id = g.id WHERE sg.user_id = u.id AND g.name = :goal)"
-        params['goal'] = goal
-    
-    if lesson_type:
-        query += " AND EXISTS (SELECT 1 FROM student_lesson_types slt JOIN lesson_types lt ON slt.lesson_type_id = lt.id WHERE slt.user_id = u.id AND lt.name = :lesson_type)"
-        params['lesson_type'] = lesson_type
-    
-    query += " ORDER BY u.id LIMIT :limit OFFSET :offset"
+    # 9. 정렬 및 페이지네이션
+    query += " ORDER BY u.created_at DESC, u.id LIMIT :limit OFFSET :offset"
     params['limit'] = limit
     params['offset'] = offset
     
     result = db.execute(text(query), params)
     students = result.fetchall()
     
+    # 10. 상세 정보 조회
     student_list = []
     for student in students:
-        user_id = student[0]
+        student_user_id = student[0]
         
         # 과목 조회
         subjects_result = db.execute(text("""
             SELECT s.name FROM student_subjects ss
             JOIN subjects s ON ss.subject_id = s.id
             WHERE ss.user_id = :user_id
-        """), {'user_id': user_id})
+        """), {'user_id': student_user_id})
         subjects = [row[0] for row in subjects_result.fetchall()]
         
         # 지역 조회
@@ -645,7 +676,7 @@ async def get_students(
             LEFT JOIN regions p ON r.parent_id = p.id
             WHERE sr.user_id = :user_id
             ORDER BY r.level, r.name
-        """), {'user_id': user_id})
+        """), {'user_id': student_user_id})
         regions = [row[0] for row in regions_result.fetchall()]
         
         # 실력 수준 조회
@@ -654,7 +685,7 @@ async def get_students(
             JOIN skill_levels sl ON ssl.skill_level_id = sl.id
             WHERE ssl.user_id = :user_id
             LIMIT 1
-        """), {'user_id': user_id})
+        """), {'user_id': student_user_id})
         skill_level = skill_result.scalar()
         
         # 학습 목적 조회
@@ -662,7 +693,7 @@ async def get_students(
             SELECT g.name FROM student_goals sg
             JOIN goals g ON sg.goal_id = g.id
             WHERE sg.user_id = :user_id
-        """), {'user_id': user_id})
+        """), {'user_id': student_user_id})
         goals = [row[0] for row in goals_result.fetchall()]
         
         # 수업 방식 조회
@@ -670,7 +701,7 @@ async def get_students(
             SELECT lt.name FROM student_lesson_types slt
             JOIN lesson_types lt ON slt.lesson_type_id = lt.id
             WHERE slt.user_id = :user_id
-        """), {'user_id': user_id})
+        """), {'user_id': student_user_id})
         lesson_types = [row[0] for row in lesson_types_result.fetchall()]
         
         student_list.append(StudentListResponse(
@@ -687,6 +718,7 @@ async def get_students(
         ))
     
     return student_list
+
 
 @app.get("/api/students/{student_id}", response_model=StudentDetailResponse)
 async def get_student_detail(
