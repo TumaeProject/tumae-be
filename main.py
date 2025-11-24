@@ -664,83 +664,83 @@ def student_details(req: StudentDetailsRequest, db: Session = Depends(get_db)):
 # ==========================================================
 
 
-@app.get("/api/students/nearby")
-async def get_nearby_students(
-    user_id: int = Query(..., description="튜터의 user_id"),
-    radius_km: float = Query(10.0, description="검색 반경 (km)"),
-    db: Session = Depends(get_db)
-):
-    """
-    튜터 위치 기준 반경 내 학생 검색
-    latitude/longitude 사용 (Haversine 공식)
-    """
-    from math import radians, sin, cos, sqrt, atan2
+# @app.get("/api/students/nearby")
+# async def get_nearby_students(
+#     user_id: int = Query(..., description="튜터의 user_id"),
+#     radius_km: float = Query(10.0, description="검색 반경 (km)"),
+#     db: Session = Depends(get_db)
+# ):
+#     """
+#     튜터 위치 기준 반경 내 학생 검색
+#     latitude/longitude 사용 (Haversine 공식)
+#     """
+#     from math import radians, sin, cos, sqrt, atan2
     
-    # 튜터의 대표 지역 좌표 조회
-    tutor_location = db.execute(text("""
-        SELECT r.latitude, r.longitude
-        FROM tutor_regions tr
-        JOIN regions r ON tr.region_id = r.id
-        WHERE tr.tutor_id = :user_id
-        AND r.latitude IS NOT NULL
-        AND r.longitude IS NOT NULL
-        LIMIT 1
-    """), {'user_id': user_id}).fetchone()
+#     # 튜터의 대표 지역 좌표 조회
+#     tutor_location = db.execute(text("""
+#         SELECT r.latitude, r.longitude
+#         FROM tutor_regions tr
+#         JOIN regions r ON tr.region_id = r.id
+#         WHERE tr.tutor_id = :user_id
+#         AND r.latitude IS NOT NULL
+#         AND r.longitude IS NOT NULL
+#         LIMIT 1
+#     """), {'user_id': user_id}).fetchone()
     
-    if not tutor_location:
-        raise HTTPException(status_code=404, detail="튜터의 위치 정보가 없습니다.")
+#     if not tutor_location:
+#         raise HTTPException(status_code=404, detail="튜터의 위치 정보가 없습니다.")
     
-    tutor_lat, tutor_lng = float(tutor_location[0]), float(tutor_location[1])
+#     tutor_lat, tutor_lng = float(tutor_location[0]), float(tutor_location[1])
     
-    # 모든 학생 지역 조회
-    student_regions = db.execute(text("""
-        SELECT DISTINCT
-            u.id, u.name, u.email,
-            r.latitude, r.longitude
-        FROM users u
-        JOIN student_regions sr ON sr.user_id = u.id
-        JOIN regions r ON r.id = sr.region_id
-        WHERE u.role = 'student'
-        AND u.signup_status = 'active'
-        AND r.latitude IS NOT NULL
-        AND r.longitude IS NOT NULL
-    """)).fetchall()
+#     # 모든 학생 지역 조회
+#     student_regions = db.execute(text("""
+#         SELECT DISTINCT
+#             u.id, u.name, u.email,
+#             r.latitude, r.longitude
+#         FROM users u
+#         JOIN student_regions sr ON sr.user_id = u.id
+#         JOIN regions r ON r.id = sr.region_id
+#         WHERE u.role = 'student'
+#         AND u.signup_status = 'active'
+#         AND r.latitude IS NOT NULL
+#         AND r.longitude IS NOT NULL
+#     """)).fetchall()
     
-    # Haversine 공식으로 거리 계산 및 필터링
-    nearby_students = []
-    R = 6371  # 지구 반지름 (km)
+#     # Haversine 공식으로 거리 계산 및 필터링
+#     nearby_students = []
+#     R = 6371  # 지구 반지름 (km)
     
-    for student_id, name, email, s_lat, s_lng in student_regions:
-        s_lat, s_lng = float(s_lat), float(s_lng)
+#     for student_id, name, email, s_lat, s_lng in student_regions:
+#         s_lat, s_lng = float(s_lat), float(s_lng)
         
-        # 거리 계산
-        dlat = radians(s_lat - tutor_lat)
-        dlng = radians(s_lng - tutor_lng)
+#         # 거리 계산
+#         dlat = radians(s_lat - tutor_lat)
+#         dlng = radians(s_lng - tutor_lng)
         
-        a = sin(dlat/2)**2 + cos(radians(tutor_lat)) * cos(radians(s_lat)) * sin(dlng/2)**2
-        c = 2 * atan2(sqrt(a), sqrt(1-a))
-        distance_km = R * c
+#         a = sin(dlat/2)**2 + cos(radians(tutor_lat)) * cos(radians(s_lat)) * sin(dlng/2)**2
+#         c = 2 * atan2(sqrt(a), sqrt(1-a))
+#         distance_km = R * c
         
-        # 반경 내에 있으면 추가
-        if distance_km <= radius_km:
-            nearby_students.append({
-                'id': student_id,
-                'name': name,
-                'email': email,
-                'distance_km': round(distance_km, 2)
-            })
+#         # 반경 내에 있으면 추가
+#         if distance_km <= radius_km:
+#             nearby_students.append({
+#                 'id': student_id,
+#                 'name': name,
+#                 'email': email,
+#                 'distance_km': round(distance_km, 2)
+#             })
     
-    # 거리순 정렬
-    nearby_students.sort(key=lambda x: x['distance_km'])
+#     # 거리순 정렬
+#     nearby_students.sort(key=lambda x: x['distance_km'])
     
-    return nearby_students
+#     return nearby_students
 
-# ==========================================================
-# 🍀 헬스체크
-# ==========================================================
-# ==========================================================
-# 🏠 루트
-# ==========================================================
+# # ==========================================================
+# # 🍀 헬스체크
+# # ==========================================================
+# # ==========================================================
+# # 🏠 루트
+# # ==========================================================
 
 @app.get("/api/students/{student_id}", response_model=StudentDetailResponse)
 async def get_student_detail(
@@ -1298,51 +1298,51 @@ def calculate_distance_postgis(db: Session, point1: tuple, point2: tuple) -> flo
 # ============================================
 
 
-@app.get("/")
-def root():
-    return {
-        "message": "SUCCESS", 
-        "service": "Tumae API - 코딩 과외 매칭 플랫폼",
-        "version": "3.0.0",
-        "docs": "/docs",
-        "endpoints": {
-            "auth": {
-                "signup": "/auth/signup",
-                "login": "/auth/login",
-                "tutor_onboarding": "/auth/tutors/details",
-                "student_onboarding": "/auth/students/details"
-            },
-            "search": {
-                "students": "/api/students",
-                "tutors": "/api/tutors"
-            }
-        }
-    }
+# @app.get("/")
+# def root():
+#     return {
+#         "message": "SUCCESS", 
+#         "service": "Tumae API - 코딩 과외 매칭 플랫폼",
+#         "version": "3.0.0",
+#         "docs": "/docs",
+#         "endpoints": {
+#             "auth": {
+#                 "signup": "/auth/signup",
+#                 "login": "/auth/login",
+#                 "tutor_onboarding": "/auth/tutors/details",
+#                 "student_onboarding": "/auth/students/details"
+#             },
+#             "search": {
+#                 "students": "/api/students",
+#                 "tutors": "/api/tutors"
+#             }
+#         }
+#     }
 
-if __name__ == "__main__":
-    import uvicorn
+# if __name__ == "__main__":
+#     import uvicorn
     
-    # 환경에 따른 설정
-    host = os.getenv('HOST', '0.0.0.0')
-    port = int(os.getenv('PORT', 8000))
+#     # 환경에 따른 설정
+#     host = os.getenv('HOST', '0.0.0.0')
+#     port = int(os.getenv('PORT', 8000))
     
-    print("🚀 Tumae API 서버 시작!")
-    print("📖 API 문서: http://localhost:8000/docs")
-    print("🔐 회원가입: POST /auth/signup")
-    print("🔐 로그인: POST /auth/login")
-    print("🔍 학생 검색: GET /api/students")
-    print("🔍 튜터 검색: GET /api/tutors")
+#     print("🚀 Tumae API 서버 시작!")
+#     print("📖 API 문서: http://localhost:8000/docs")
+#     print("🔐 회원가입: POST /auth/signup")
+#     print("🔐 로그인: POST /auth/login")
+#     print("🔍 학생 검색: GET /api/students")
+#     print("🔍 튜터 검색: GET /api/tutors")
     
-    # 프로덕션에서는 reload=False
-    reload = os.getenv('ENVIRONMENT', 'development') == 'development'
+#     # 프로덕션에서는 reload=False
+#     reload = os.getenv('ENVIRONMENT', 'development') == 'development'
     
-    uvicorn.run(app, host=host, port=port, reload=reload)# main.py에 추가할 프로필 업데이트 엔드포인트
+#     uvicorn.run(app, host=host, port=port, reload=reload)# main.py에 추가할 프로필 업데이트 엔드포인트
 
-# ==========================================================
-# 📝 프로필 업데이트 API
-# ==========================================================
+# # ==========================================================
+# # 📝 프로필 업데이트 API
+# # ==========================================================
 
-# --- Request Models ---
+# # --- Request Models ---
 class UpdateStudentProfileRequest(BaseModel):
     preferred_price_min: Optional[int] = None
     preferred_price_max: Optional[int] = None
@@ -1369,287 +1369,287 @@ class UpdateTutorProfileRequest(BaseModel):
 # 👨‍🎓 학생 프로필 업데이트
 # ==========================================================
 
-@app.put("/api/profile/student")
-def update_student_profile(
-    profile: UpdateStudentProfileRequest,
-    db: Session = Depends(get_db),
-    current_user_id: int = Query(..., description="현재 로그인한 사용자 ID")
-):
-    """학생 프로필 업데이트"""
+# @app.put("/api/profile/student")
+# def update_student_profile(
+#     profile: UpdateStudentProfileRequest,
+#     db: Session = Depends(get_db),
+#     current_user_id: int = Query(..., description="현재 로그인한 사용자 ID")
+# ):
+#     """학생 프로필 업데이트"""
     
-    try:
-        # 사용자 확인
-        user = db.execute(text("""
-            SELECT id, role FROM users WHERE id = :user_id
-        """), {'user_id': current_user_id}).fetchone()
+#     try:
+#         # 사용자 확인
+#         user = db.execute(text("""
+#             SELECT id, role FROM users WHERE id = :user_id
+#         """), {'user_id': current_user_id}).fetchone()
         
-        if not user:
-            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+#         if not user:
+#             raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
         
-        if user[1] != 'student':
-            raise HTTPException(status_code=403, detail="학생만 접근 가능합니다.")
+#         if user[1] != 'student':
+#             raise HTTPException(status_code=403, detail="학생만 접근 가능합니다.")
         
-        # 1. student_profiles 테이블 업데이트
-        if any([profile.preferred_price_min, profile.preferred_price_max, profile.availability]):
-            # 프로필이 있는지 확인
-            existing = db.execute(text("""
-                SELECT user_id FROM student_profiles WHERE user_id = :user_id
-            """), {'user_id': current_user_id}).fetchone()
+#         # 1. student_profiles 테이블 업데이트
+#         if any([profile.preferred_price_min, profile.preferred_price_max, profile.availability]):
+#             # 프로필이 있는지 확인
+#             existing = db.execute(text("""
+#                 SELECT user_id FROM student_profiles WHERE user_id = :user_id
+#             """), {'user_id': current_user_id}).fetchone()
             
-            if existing:
-                # 업데이트
-                update_fields = []
-                params = {'user_id': current_user_id}
+#             if existing:
+#                 # 업데이트
+#                 update_fields = []
+#                 params = {'user_id': current_user_id}
                 
-                if profile.preferred_price_min is not None:
-                    update_fields.append("preferred_price_min = :price_min")
-                    params['price_min'] = profile.preferred_price_min
+#                 if profile.preferred_price_min is not None:
+#                     update_fields.append("preferred_price_min = :price_min")
+#                     params['price_min'] = profile.preferred_price_min
                 
-                if profile.preferred_price_max is not None:
-                    update_fields.append("preferred_price_max = :price_max")
-                    params['price_max'] = profile.preferred_price_max
+#                 if profile.preferred_price_max is not None:
+#                     update_fields.append("preferred_price_max = :price_max")
+#                     params['price_max'] = profile.preferred_price_max
                 
-                if profile.availability is not None:
-                    update_fields.append("availability = :availability")
-                    params['availability'] = profile.availability
+#                 if profile.availability is not None:
+#                     update_fields.append("availability = :availability")
+#                     params['availability'] = profile.availability
                 
-                if update_fields:
-                    db.execute(text(f"""
-                        UPDATE student_profiles 
-                        SET {', '.join(update_fields)}
-                        WHERE user_id = :user_id
-                    """), params)
-            else:
-                # 신규 생성
-                db.execute(text("""
-                    INSERT INTO student_profiles (user_id, preferred_price_min, preferred_price_max, availability, created_at)
-                    VALUES (:user_id, :price_min, :price_max, :availability, NOW())
-                """), {
-                    'user_id': current_user_id,
-                    'price_min': profile.preferred_price_min,
-                    'price_max': profile.preferred_price_max,
-                    'availability': profile.availability
-                })
+#                 if update_fields:
+#                     db.execute(text(f"""
+#                         UPDATE student_profiles 
+#                         SET {', '.join(update_fields)}
+#                         WHERE user_id = :user_id
+#                     """), params)
+#             else:
+#                 # 신규 생성
+#                 db.execute(text("""
+#                     INSERT INTO student_profiles (user_id, preferred_price_min, preferred_price_max, availability, created_at)
+#                     VALUES (:user_id, :price_min, :price_max, :availability, NOW())
+#                 """), {
+#                     'user_id': current_user_id,
+#                     'price_min': profile.preferred_price_min,
+#                     'price_max': profile.preferred_price_max,
+#                     'availability': profile.availability
+#                 })
         
-        # 2. 과목 업데이트
-        if profile.subjects is not None:
-            # 기존 과목 삭제
-            db.execute(text("""
-                DELETE FROM student_subjects WHERE user_id = :user_id
-            """), {'user_id': current_user_id})
+#         # 2. 과목 업데이트
+#         if profile.subjects is not None:
+#             # 기존 과목 삭제
+#             db.execute(text("""
+#                 DELETE FROM student_subjects WHERE user_id = :user_id
+#             """), {'user_id': current_user_id})
             
-            # 새 과목 추가
-            for subject_id in profile.subjects:
-                db.execute(text("""
-                    INSERT INTO student_subjects (user_id, subject_id)
-                    VALUES (:user_id, :subject_id)
-                """), {'user_id': current_user_id, 'subject_id': subject_id})
+#             # 새 과목 추가
+#             for subject_id in profile.subjects:
+#                 db.execute(text("""
+#                     INSERT INTO student_subjects (user_id, subject_id)
+#                     VALUES (:user_id, :subject_id)
+#                 """), {'user_id': current_user_id, 'subject_id': subject_id})
         
-        # 3. 지역 업데이트
-        if profile.regions is not None:
-            # 기존 지역 삭제
-            db.execute(text("""
-                DELETE FROM student_regions WHERE user_id = :user_id
-            """), {'user_id': current_user_id})
+#         # 3. 지역 업데이트
+#         if profile.regions is not None:
+#             # 기존 지역 삭제
+#             db.execute(text("""
+#                 DELETE FROM student_regions WHERE user_id = :user_id
+#             """), {'user_id': current_user_id})
             
-            # 새 지역 추가
-            for region_id in profile.regions:
-                db.execute(text("""
-                    INSERT INTO student_regions (user_id, region_id)
-                    VALUES (:user_id, :region_id)
-                """), {'user_id': current_user_id, 'region_id': region_id})
+#             # 새 지역 추가
+#             for region_id in profile.regions:
+#                 db.execute(text("""
+#                     INSERT INTO student_regions (user_id, region_id)
+#                     VALUES (:user_id, :region_id)
+#                 """), {'user_id': current_user_id, 'region_id': region_id})
         
-        # 4. 실력 수준 업데이트
-        if profile.skill_levels is not None:
-            db.execute(text("""
-                DELETE FROM student_skill_levels WHERE user_id = :user_id
-            """), {'user_id': current_user_id})
+#         # 4. 실력 수준 업데이트
+#         if profile.skill_levels is not None:
+#             db.execute(text("""
+#                 DELETE FROM student_skill_levels WHERE user_id = :user_id
+#             """), {'user_id': current_user_id})
             
-            for skill_id in profile.skill_levels:
-                db.execute(text("""
-                    INSERT INTO student_skill_levels (user_id, skill_level_id)
-                    VALUES (:user_id, :skill_id)
-                """), {'user_id': current_user_id, 'skill_id': skill_id})
+#             for skill_id in profile.skill_levels:
+#                 db.execute(text("""
+#                     INSERT INTO student_skill_levels (user_id, skill_level_id)
+#                     VALUES (:user_id, :skill_id)
+#                 """), {'user_id': current_user_id, 'skill_id': skill_id})
         
-        # 5. 학습 목적 업데이트
-        if profile.goals is not None:
-            db.execute(text("""
-                DELETE FROM student_goals WHERE user_id = :user_id
-            """), {'user_id': current_user_id})
+#         # 5. 학습 목적 업데이트
+#         if profile.goals is not None:
+#             db.execute(text("""
+#                 DELETE FROM student_goals WHERE user_id = :user_id
+#             """), {'user_id': current_user_id})
             
-            for goal_id in profile.goals:
-                db.execute(text("""
-                    INSERT INTO student_goals (user_id, goal_id)
-                    VALUES (:user_id, :goal_id)
-                """), {'user_id': current_user_id, 'goal_id': goal_id})
+#             for goal_id in profile.goals:
+#                 db.execute(text("""
+#                     INSERT INTO student_goals (user_id, goal_id)
+#                     VALUES (:user_id, :goal_id)
+#                 """), {'user_id': current_user_id, 'goal_id': goal_id})
         
-        # 6. 수업 방식 업데이트
-        if profile.lesson_types is not None:
-            db.execute(text("""
-                DELETE FROM student_lesson_types WHERE user_id = :user_id
-            """), {'user_id': current_user_id})
+#         # 6. 수업 방식 업데이트
+#         if profile.lesson_types is not None:
+#             db.execute(text("""
+#                 DELETE FROM student_lesson_types WHERE user_id = :user_id
+#             """), {'user_id': current_user_id})
             
-            for lesson_type_id in profile.lesson_types:
-                db.execute(text("""
-                    INSERT INTO student_lesson_types (user_id, lesson_type_id)
-                    VALUES (:user_id, :lesson_type_id)
-                """), {'user_id': current_user_id, 'lesson_type_id': lesson_type_id})
+#             for lesson_type_id in profile.lesson_types:
+#                 db.execute(text("""
+#                     INSERT INTO student_lesson_types (user_id, lesson_type_id)
+#                     VALUES (:user_id, :lesson_type_id)
+#                 """), {'user_id': current_user_id, 'lesson_type_id': lesson_type_id})
         
-        # 7. signup_status를 'active'로 변경
-        db.execute(text("""
-            UPDATE users SET signup_status = 'active' WHERE id = :user_id
-        """), {'user_id': current_user_id})
+#         # 7. signup_status를 'active'로 변경
+#         db.execute(text("""
+#             UPDATE users SET signup_status = 'active' WHERE id = :user_id
+#         """), {'user_id': current_user_id})
         
-        db.commit()
+#         db.commit()
         
-        return {"message": "학생 프로필이 성공적으로 업데이트되었습니다."}
+#         return {"message": "학생 프로필이 성공적으로 업데이트되었습니다."}
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"프로필 업데이트 중 오류: {str(e)}")
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         db.rollback()
+#         raise HTTPException(status_code=500, detail=f"프로필 업데이트 중 오류: {str(e)}")
 
-# ==========================================================
-# 👨‍🏫 튜터 프로필 업데이트
-# ==========================================================
+# # ==========================================================
+# # 👨‍🏫 튜터 프로필 업데이트
+# # ==========================================================
 
-@app.put("/api/profile/tutor")
-def update_tutor_profile(
-    profile: UpdateTutorProfileRequest,
-    db: Session = Depends(get_db),
-    current_user_id: int = Query(..., description="현재 로그인한 사용자 ID")
-):
-    """튜터 프로필 업데이트"""
+# @app.put("/api/profile/tutor")
+# def update_tutor_profile(
+#     profile: UpdateTutorProfileRequest,
+#     db: Session = Depends(get_db),
+#     current_user_id: int = Query(..., description="현재 로그인한 사용자 ID")
+# ):
+#     """튜터 프로필 업데이트"""
     
-    try:
-        # 사용자 확인
-        user = db.execute(text("""
-            SELECT id, role FROM users WHERE id = :user_id
-        """), {'user_id': current_user_id}).fetchone()
+#     try:
+#         # 사용자 확인
+#         user = db.execute(text("""
+#             SELECT id, role FROM users WHERE id = :user_id
+#         """), {'user_id': current_user_id}).fetchone()
         
-        if not user:
-            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+#         if not user:
+#             raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
         
-        if user[1] != 'tutor':
-            raise HTTPException(status_code=403, detail="튜터만 접근 가능합니다.")
+#         if user[1] != 'tutor':
+#             raise HTTPException(status_code=403, detail="튜터만 접근 가능합니다.")
         
-        # 1. tutor_profiles 테이블 업데이트
-        if any([profile.hourly_rate_min, profile.hourly_rate_max, profile.experience_years, 
-                profile.education, profile.career, profile.introduction, profile.availability]):
+#         # 1. tutor_profiles 테이블 업데이트
+#         if any([profile.hourly_rate_min, profile.hourly_rate_max, profile.experience_years, 
+#                 profile.education, profile.career, profile.introduction, profile.availability]):
             
-            # 프로필이 있는지 확인
-            existing = db.execute(text("""
-                SELECT user_id FROM tutor_profiles WHERE user_id = :user_id
-            """), {'user_id': current_user_id}).fetchone()
+#             # 프로필이 있는지 확인
+#             existing = db.execute(text("""
+#                 SELECT user_id FROM tutor_profiles WHERE user_id = :user_id
+#             """), {'user_id': current_user_id}).fetchone()
             
-            if existing:
-                # 업데이트
-                update_fields = []
-                params = {'user_id': current_user_id}
+#             if existing:
+#                 # 업데이트
+#                 update_fields = []
+#                 params = {'user_id': current_user_id}
                 
-                if profile.hourly_rate_min is not None:
-                    update_fields.append("hourly_rate_min = :rate_min")
-                    params['rate_min'] = profile.hourly_rate_min
+#                 if profile.hourly_rate_min is not None:
+#                     update_fields.append("hourly_rate_min = :rate_min")
+#                     params['rate_min'] = profile.hourly_rate_min
                 
-                if profile.hourly_rate_max is not None:
-                    update_fields.append("hourly_rate_max = :rate_max")
-                    params['rate_max'] = profile.hourly_rate_max
+#                 if profile.hourly_rate_max is not None:
+#                     update_fields.append("hourly_rate_max = :rate_max")
+#                     params['rate_max'] = profile.hourly_rate_max
                 
-                if profile.experience_years is not None:
-                    update_fields.append("experience_years = :exp_years")
-                    params['exp_years'] = profile.experience_years
+#                 if profile.experience_years is not None:
+#                     update_fields.append("experience_years = :exp_years")
+#                     params['exp_years'] = profile.experience_years
                 
-                if profile.education is not None:
-                    update_fields.append("education = :education")
-                    params['education'] = profile.education
+#                 if profile.education is not None:
+#                     update_fields.append("education = :education")
+#                     params['education'] = profile.education
                 
-                if profile.career is not None:
-                    update_fields.append("career = :career")
-                    params['career'] = profile.career
+#                 if profile.career is not None:
+#                     update_fields.append("career = :career")
+#                     params['career'] = profile.career
                 
-                if profile.introduction is not None:
-                    update_fields.append("introduction = :intro")
-                    params['intro'] = profile.introduction
+#                 if profile.introduction is not None:
+#                     update_fields.append("introduction = :intro")
+#                     params['intro'] = profile.introduction
                 
-                if profile.availability is not None:
-                    update_fields.append("availability = :availability")
-                    params['availability'] = profile.availability
+#                 if profile.availability is not None:
+#                     update_fields.append("availability = :availability")
+#                     params['availability'] = profile.availability
                 
-                if update_fields:
-                    db.execute(text(f"""
-                        UPDATE tutor_profiles 
-                        SET {', '.join(update_fields)}
-                        WHERE user_id = :user_id
-                    """), params)
-            else:
-                # 신규 생성
-                db.execute(text("""
-                    INSERT INTO tutor_profiles 
-                    (user_id, hourly_rate_min, hourly_rate_max, experience_years, education, career, introduction, availability, created_at)
-                    VALUES (:user_id, :rate_min, :rate_max, :exp_years, :education, :career, :intro, :availability, NOW())
-                """), {
-                    'user_id': current_user_id,
-                    'rate_min': profile.hourly_rate_min,
-                    'rate_max': profile.hourly_rate_max,
-                    'exp_years': profile.experience_years,
-                    'education': profile.education,
-                    'career': profile.career,
-                    'intro': profile.introduction,
-                    'availability': profile.availability
-                })
+#                 if update_fields:
+#                     db.execute(text(f"""
+#                         UPDATE tutor_profiles 
+#                         SET {', '.join(update_fields)}
+#                         WHERE user_id = :user_id
+#                     """), params)
+#             else:
+#                 # 신규 생성
+#                 db.execute(text("""
+#                     INSERT INTO tutor_profiles 
+#                     (user_id, hourly_rate_min, hourly_rate_max, experience_years, education, career, introduction, availability, created_at)
+#                     VALUES (:user_id, :rate_min, :rate_max, :exp_years, :education, :career, :intro, :availability, NOW())
+#                 """), {
+#                     'user_id': current_user_id,
+#                     'rate_min': profile.hourly_rate_min,
+#                     'rate_max': profile.hourly_rate_max,
+#                     'exp_years': profile.experience_years,
+#                     'education': profile.education,
+#                     'career': profile.career,
+#                     'intro': profile.introduction,
+#                     'availability': profile.availability
+#                 })
         
-        # 2. 과목 업데이트
-        if profile.subjects is not None:
-            # 기존 과목 삭제
-            db.execute(text("""
-                DELETE FROM tutor_subjects WHERE tutor_id = :user_id
-            """), {'user_id': current_user_id})
+#         # 2. 과목 업데이트
+#         if profile.subjects is not None:
+#             # 기존 과목 삭제
+#             db.execute(text("""
+#                 DELETE FROM tutor_subjects WHERE tutor_id = :user_id
+#             """), {'user_id': current_user_id})
             
-            # 새 과목 추가
-            for subject_id in profile.subjects:
-                db.execute(text("""
-                    INSERT INTO tutor_subjects (tutor_id, subject_id)
-                    VALUES (:user_id, :subject_id)
-                """), {'user_id': current_user_id, 'subject_id': subject_id})
+#             # 새 과목 추가
+#             for subject_id in profile.subjects:
+#                 db.execute(text("""
+#                     INSERT INTO tutor_subjects (tutor_id, subject_id)
+#                     VALUES (:user_id, :subject_id)
+#                 """), {'user_id': current_user_id, 'subject_id': subject_id})
         
-        # 3. 지역 업데이트 ⭐ 이게 중요!
-        if profile.regions is not None:
-            # 기존 지역 삭제
-            db.execute(text("""
-                DELETE FROM tutor_regions WHERE tutor_id = :user_id
-            """), {'user_id': current_user_id})
+#         # 3. 지역 업데이트 ⭐ 이게 중요!
+#         if profile.regions is not None:
+#             # 기존 지역 삭제
+#             db.execute(text("""
+#                 DELETE FROM tutor_regions WHERE tutor_id = :user_id
+#             """), {'user_id': current_user_id})
             
-            # 새 지역 추가
-            for region_id in profile.regions:
-                db.execute(text("""
-                    INSERT INTO tutor_regions (tutor_id, region_id)
-                    VALUES (:user_id, :region_id)
-                """), {'user_id': current_user_id, 'region_id': region_id})
+#             # 새 지역 추가
+#             for region_id in profile.regions:
+#                 db.execute(text("""
+#                     INSERT INTO tutor_regions (tutor_id, region_id)
+#                     VALUES (:user_id, :region_id)
+#                 """), {'user_id': current_user_id, 'region_id': region_id})
         
-        # 4. 수업 방식 업데이트
-        if profile.lesson_types is not None:
-            db.execute(text("""
-                DELETE FROM tutor_lesson_types WHERE tutor_id = :user_id
-            """), {'user_id': current_user_id})
+#         # 4. 수업 방식 업데이트
+#         if profile.lesson_types is not None:
+#             db.execute(text("""
+#                 DELETE FROM tutor_lesson_types WHERE tutor_id = :user_id
+#             """), {'user_id': current_user_id})
             
-            for lesson_type_id in profile.lesson_types:
-                db.execute(text("""
-                    INSERT INTO tutor_lesson_types (tutor_id, lesson_type_id)
-                    VALUES (:user_id, :lesson_type_id)
-                """), {'user_id': current_user_id, 'lesson_type_id': lesson_type_id})
+#             for lesson_type_id in profile.lesson_types:
+#                 db.execute(text("""
+#                     INSERT INTO tutor_lesson_types (tutor_id, lesson_type_id)
+#                     VALUES (:user_id, :lesson_type_id)
+#                 """), {'user_id': current_user_id, 'lesson_type_id': lesson_type_id})
         
-        # 5. signup_status를 'active'로 변경
-        db.execute(text("""
-            UPDATE users SET signup_status = 'active' WHERE id = :user_id
-        """), {'user_id': current_user_id})
+#         # 5. signup_status를 'active'로 변경
+#         db.execute(text("""
+#             UPDATE users SET signup_status = 'active' WHERE id = :user_id
+#         """), {'user_id': current_user_id})
         
-        db.commit()
+#         db.commit()
         
-        return {"message": "튜터 프로필이 성공적으로 업데이트되었습니다."}
+#         return {"message": "튜터 프로필이 성공적으로 업데이트되었습니다."}
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"프로필 업데이트 중 오류: {str(e)}")
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         db.rollback()
+#         raise HTTPException(status_code=500, detail=f"프로필 업데이트 중 오류: {str(e)}")
