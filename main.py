@@ -343,6 +343,41 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         if not user:
             raise HTTPException(404, "USER_NOT_FOUND")
 
+        # 비밀번호 검증
+        if not verify_password(data.password, user.password_hash):
+            raise HTTPException(401, "INVALID_CREDENTIALS")
+
+        # 프로필 미완성 상태 체크
+        if user.signup_status == "pending_profile":
+            raise HTTPException(403, "INACTIVE_ACCOUNT")
+
+        # JWT 토큰 생성
+        access_token = create_access_token({"sub": data.email})
+        refresh_token = create_refresh_token({"sub": data.email})
+
+        # 역할에 따른 리다이렉트 URL
+        redirect_url = "/students" if user.role == "tutor" else "/tutors"
+
+        return {
+            "message": "SUCCESS",
+            "data": {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "user": {
+                    "user_id": user.id,
+                    "email": user.email,
+                    "name": user.name,
+                    "role": user.role
+                },
+                "redirect_url": redirect_url
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"로그인 중 오류가 발생했습니다: {str(e)}")
+
 # ==========================================================
 # 🧑‍🏫 튜터 온보딩 (PATCH)
 # ==========================================================
