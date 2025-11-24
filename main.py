@@ -560,133 +560,7 @@ def student_details(req: StudentDetailsRequest, db: Session = Depends(get_db)):
 # 👨‍🎓 학생 찾기 APIs
 # ==========================================================
 
-@app.get("/api/students", response_model=List[StudentListResponse])
 
-@app.get("/api/students", response_model=List[StudentListResponse])
-async def get_students(
-    user_id: int = Query(..., description="튜터의 user_id"),
-    db: Session = Depends(get_db),
-    min_score: int = Query(50, description="최소 매칭 점수 (0-100)"),
-    limit: int = Query(20, description="결과 개수 제한"),
-    offset: int = Query(0, description="결과 시작 위치")
-):
-    """
-    학생 목록 검색 - 스코어링 기반 매칭 시스템
-    
-    매칭 점수 기준:
-    - 과목 일치: 40점 (가장 중요)
-    - 지역 일치: 30점
-    - 가격 범위 일치: 20점
-    - 수업 방식 일치: 10점
-    
-    최소 50점 이상인 학생만 반환 (기본값)
-    """
-    
-    # 1. 튜터가 실제로 존재하는지 확인
-    tutor_check = db.execute(text("""
-        SELECT id FROM users WHERE id = :user_id AND role = 'tutor'
-    """), {'user_id': user_id})
-    
-    if not tutor_check.fetchone():
-        raise HTTPException(status_code=404, detail="해당 튜터를 찾을 수 없습니다.")
-    
-    # 2. 튜터의 프로필 정보 조회
-    tutor_profile = db.execute(text("""
-        SELECT hourly_rate_min, hourly_rate_max FROM tutor_profiles WHERE user_id = :user_id
-    """), {'user_id': user_id})
-    tutor_data = tutor_profile.fetchone()
-    
-    # 3. 튜터의 과목, 지역, 수업방식 조회
-    tutor_subjects = db.execute(text("""
-        SELECT subject_id FROM tutor_subjects WHERE tutor_id = :user_id
-    """), {'user_id': user_id}).fetchall()
-    tutor_subject_ids = set([row[0] for row in tutor_subjects])
-    
-    tutor_regions = db.execute(text("""
-        SELECT region_id FROM tutor_regions WHERE tutor_id = :user_id
-    """), {'user_id': user_id}).fetchall()
-    tutor_region_ids = set([row[0] for row in tutor_regions])
-    
-    tutor_lesson_types = db.execute(text("""
-        SELECT lesson_type_id FROM tutor_lesson_types WHERE tutor_id = :user_id
-    """), {'user_id': user_id}).fetchall()
-    tutor_lesson_type_ids = set([row[0] for row in tutor_lesson_types])
-    
-    # 4. 모든 활성 학생 조회
-    students_query = """
-        SELECT 
-            u.id, u.name, u.email, u.created_at, u.signup_status,
-            sp.preferred_price_min, sp.preferred_price_max
-        FROM users u
-        LEFT JOIN student_profiles sp ON u.id = sp.user_id
-        WHERE u.role = 'student' AND u.signup_status = 'active'
-    """
-    
-    result = db.execute(text(students_query))
-    all_students = result.fetchall()
-    
-    # 5. 각 학생에 대해 점수 계산
-    scored_students = []
-    
-    for student in all_students:
-        student_user_id = student[0]
-        score = 0
-        
-        # 과목 매칭 점수 (40점)
-        if tutor_subject_ids:
-            student_subjects = db.execute(text("""
-                SELECT subject_id FROM student_subjects WHERE user_id = :user_id
-            """), {'user_id': student_user_id}).fetchall()
-            student_subject_ids = set([row[0] for row in student_subjects])
-            
-            if tutor_subject_ids & student_subject_ids:  # 교집합이 있으면
-                score += 40
-        
-        # 지역 매칭 점수 (30점)
-        if tutor_region_ids:
-            student_regions = db.execute(text("""
-                SELECT region_id FROM student_regions WHERE user_id = :user_id
-            """), {'user_id': student_user_id}).fetchall()
-            student_region_ids = set([row[0] for row in student_regions])
-            
-            if tutor_region_ids & student_region_ids:
-                score += 30
-        
-        # 가격 매칭 점수 (20점)
-        if tutor_data and tutor_data[0] and tutor_data[1]:
-            student_price_min = student[5]
-            student_price_max = student[6]
-            
-            # 가격 범위 겹침 체크
-            if student_price_max is None or student_price_max >= tutor_data[0]:
-                if student_price_min is None or student_price_min <= tutor_data[1]:
-                    score += 20
-        
-        # 수업 방식 매칭 점수 (10점)
-        if tutor_lesson_type_ids:
-            student_lesson_types = db.execute(text("""
-                SELECT lesson_type_id FROM student_lesson_types WHERE user_id = :user_id
-            """), {'user_id': student_user_id}).fetchall()
-            student_lesson_type_ids = set([row[0] for row in student_lesson_types])
-            
-            if tutor_lesson_type_ids & student_lesson_type_ids:
-                score += 10
-        
-        # 최소 점수 이상인 경우만 추가
-        if score >= min_score:
-            scored_students.append((student, score))
-    
-    # 6. 점수순으로 정렬 (점수 높은순, 최신순)
-    scored_students.sort(key=lambda x: (-x[1], -x[0][3].timestamp() if x[0][3] else 0))
-    
-    # 7. 페이지네이션 적용
-    paginated_students = scored_students[offset:offset + limit]
-    
-    # 8. 상세 정보 조회 및 응답 생성
-    student_list = []
-    for student, match_score in paginated_students:
-        student_user_id = student[0]
-        
         # 과목 조회
         subjects_result = db.execute(text("""
             SELECT s.name FROM student_subjects ss
@@ -751,6 +625,69 @@ async def get_students(
     
     return student_list
 
+
+@app.get("/api/students/nearby")
+async def get_nearby_students(
+    user_id: int = Query(..., description="튜터의 user_id"),
+    radius_km: float = Query(10.0, description="검색 반경 (km)"),
+    db: Session = Depends(get_db)
+):
+    """
+    튜터 위치 기준 반경 내 학생 검색
+    PostGIS의 ST_DWithin 함수 사용
+    """
+    
+    # 튜터의 대표 지역 좌표 조회
+    tutor_location = db.execute(text("""
+        SELECT r.geom
+        FROM tutor_regions tr
+        JOIN regions r ON tr.region_id = r.id
+        WHERE tr.tutor_id = :user_id
+        AND r.geom IS NOT NULL
+        LIMIT 1
+    """), {'user_id': user_id}).fetchone()
+    
+    if not tutor_location:
+        raise HTTPException(status_code=404, detail="튜터의 위치 정보가 없습니다.")
+    
+    # 반경 내 학생 검색
+    students = db.execute(text("""
+        SELECT DISTINCT
+            u.id, u.name, u.email,
+            (ST_Distance(
+                ST_Transform(:tutor_geom::geometry, 5179),
+                ST_Transform(r.geom, 5179)
+            ) / 1000.0)::NUMERIC(10,2) as distance_km
+        FROM users u
+        JOIN student_regions sr ON sr.user_id = u.id
+        JOIN regions r ON r.id = sr.region_id
+        WHERE u.role = 'student'
+        AND u.signup_status = 'active'
+        AND r.geom IS NOT NULL
+        AND ST_DWithin(
+            ST_Transform(:tutor_geom::geometry, 5179),
+            ST_Transform(r.geom, 5179),
+            :radius_meters
+        )
+        ORDER BY distance_km
+    """), {
+        'tutor_geom': str(tutor_location[0]),
+        'radius_meters': radius_km * 1000
+    }).fetchall()
+    
+    return [{
+        'id': s[0],
+        'name': s[1],
+        'email': s[2],
+        'distance_km': float(s[3])  # NUMERIC을 float으로 변환
+    } for s in students]
+
+# ==========================================================
+# 🍀 헬스체크
+# ==========================================================
+# ==========================================================
+# 🏠 루트
+# ==========================================================
 
 @app.get("/api/students/{student_id}", response_model=StudentDetailResponse)
 async def get_student_detail(
@@ -1198,68 +1135,7 @@ def calculate_distance_postgis(db: Session, point1: tuple, point2: tuple) -> flo
 # 반경 내 학생 검색 (보너스 기능)
 # ============================================
 
-@app.get("/api/students/nearby")
-async def get_nearby_students(
-    user_id: int = Query(..., description="튜터의 user_id"),
-    radius_km: float = Query(10.0, description="검색 반경 (km)"),
-    db: Session = Depends(get_db)
-):
-    """
-    튜터 위치 기준 반경 내 학생 검색
-    PostGIS의 ST_DWithin 함수 사용
-    """
-    
-    # 튜터의 대표 지역 좌표 조회
-    tutor_location = db.execute(text("""
-        SELECT r.geom
-        FROM tutor_regions tr
-        JOIN regions r ON tr.region_id = r.id
-        WHERE tr.tutor_id = :user_id
-        AND r.geom IS NOT NULL
-        LIMIT 1
-    """), {'user_id': user_id}).fetchone()
-    
-    if not tutor_location:
-        raise HTTPException(status_code=404, detail="튜터의 위치 정보가 없습니다.")
-    
-    # 반경 내 학생 검색
-    students = db.execute(text("""
-        SELECT DISTINCT
-            u.id, u.name, u.email,
-            (ST_Distance(
-                ST_Transform(:tutor_geom::geometry, 5179),
-                ST_Transform(r.geom, 5179)
-            ) / 1000.0)::NUMERIC(10,2) as distance_km
-        FROM users u
-        JOIN student_regions sr ON sr.user_id = u.id
-        JOIN regions r ON r.id = sr.region_id
-        WHERE u.role = 'student'
-        AND u.signup_status = 'active'
-        AND r.geom IS NOT NULL
-        AND ST_DWithin(
-            ST_Transform(:tutor_geom::geometry, 5179),
-            ST_Transform(r.geom, 5179),
-            :radius_meters
-        )
-        ORDER BY distance_km
-    """), {
-        'tutor_geom': str(tutor_location[0]),
-        'radius_meters': radius_km * 1000
-    }).fetchall()
-    
-    return [{
-        'id': s[0],
-        'name': s[1],
-        'email': s[2],
-        'distance_km': float(s[3])  # NUMERIC을 float으로 변환
-    } for s in students]
 
-# ==========================================================
-# 🍀 헬스체크
-# ==========================================================
-# ==========================================================
-# 🏠 루트
-# ==========================================================
 @app.get("/")
 def root():
     return {
