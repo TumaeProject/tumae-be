@@ -1023,7 +1023,7 @@ async def get_students(
     user_id: int = Query(..., description="튜터의 user_id"),
     db: Session = Depends(get_db),
     min_score: int = Query(50, description="최소 매칭 점수 (0-100)"),
-    max_distance_km: float = Query(50.0, description="최대 거리 (km)"),
+    max_distance_km: Optional[float] = Query(None, description="최대 거리 (km) - 설정 시 이 거리 내 학생만"),
     limit: int = Query(20, description="결과 개수 제한"),
     offset: int = Query(0, description="결과 시작 위치")
 ):
@@ -1031,15 +1031,19 @@ async def get_students(
     학생 목록 검색 - PostGIS 거리 기반 매칭
     
     매칭 점수 기준:
-    - 과목 일치: 40점
+    - 과목 일치: 40점 (가장 중요)
     - 거리 기반 지역 점수: 30점
-      * 0-5km: 30점
-      * 5-10km: 25점
-      * 10-20km: 20점
-      * 20-30km: 15점
-      * 30-50km: 10점
+      * 0-10km: 30점
+      * 10-20km: 25점
+      * 20-30km: 20점
+      * 30-50km: 15점
+      * 50-100km: 10점
+      * 100-200km: 5점
+      * 200km 이상: 0점
     - 가격 범위 일치: 20점
     - 수업 방식 일치: 10점
+    
+    정렬: 점수 높은순 → 거리 가까운순 → 최신순
     """
     
     # ... (튜터 확인 및 프로필 조회는 동일)
@@ -1116,17 +1120,19 @@ async def get_students(
                         min_distance = min(min_distance, distance_km)
                 
                 # 거리에 따른 점수 부여
-                if min_distance <= max_distance_km:
-                    if min_distance <= 5:
-                        score += 30      # 0-5km: 30점
-                    elif min_distance <= 10:
-                        score += 25      # 5-10km: 25점
-                    elif min_distance <= 20:
-                        score += 20      # 10-20km: 20점
-                    elif min_distance <= 30:
-                        score += 15      # 20-30km: 15점
-                    elif min_distance <= 50:
-                        score += 10      # 30-50km: 10점
+                if min_distance <= 10:
+                    score += 30      # 0-10km: 30점
+                elif min_distance <= 20:
+                    score += 25      # 10-20km: 25점
+                elif min_distance <= 30:
+                    score += 20      # 20-30km: 20점
+                elif min_distance <= 50:
+                    score += 15      # 30-50km: 15점
+                elif min_distance <= 100:
+                    score += 10      # 50-100km: 10점
+                elif min_distance <= 200:
+                    score += 5       # 100-200km: 5점
+                # 200km 이상은 0점
         
         # 3. 가격 매칭 (20점) - 동일
         # ... (이전과 동일)
@@ -1134,8 +1140,16 @@ async def get_students(
         # 4. 수업 방식 매칭 (10점) - 동일
         # ... (이전과 동일)
         
-        if score >= min_score:
-            scored_students.append((student, score, min_distance if min_distance != float('inf') else None))
+        # 최소 점수 필터링
+        if score < min_score:
+            continue
+        
+        # 최대 거리 필터링 (옵션)
+        if max_distance_km is not None:
+            if min_distance == float('inf') or min_distance > max_distance_km:
+                continue
+        
+        scored_students.append((student, score, min_distance if min_distance != float('inf') else None))
     
     # 점수순 정렬 (같은 점수면 거리 가까운 순)
     scored_students.sort(key=lambda x: (-x[1], x[2] if x[2] else float('inf')))
