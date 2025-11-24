@@ -560,6 +560,7 @@ def student_details(req: StudentDetailsRequest, db: Session = Depends(get_db)):
 # 👨‍🎓 학생 찾기 APIs
 # ==========================================================
 
+@app.get("/api/students", response_model=List[StudentListResponse])
 
 @app.get("/api/students", response_model=List[StudentListResponse])
 async def get_students(
@@ -599,110 +600,92 @@ async def get_students(
     tutor_subjects = db.execute(text("""
         SELECT subject_id FROM tutor_subjects WHERE tutor_id = :user_id
     """), {'user_id': user_id}).fetchall()
-    tutor_subject_ids = [row[0] for row in tutor_subjects]
+    tutor_subject_ids = set([row[0] for row in tutor_subjects])
     
     tutor_regions = db.execute(text("""
         SELECT region_id FROM tutor_regions WHERE tutor_id = :user_id
     """), {'user_id': user_id}).fetchall()
-    tutor_region_ids = [row[0] for row in tutor_regions]
+    tutor_region_ids = set([row[0] for row in tutor_regions])
     
     tutor_lesson_types = db.execute(text("""
         SELECT lesson_type_id FROM tutor_lesson_types WHERE tutor_id = :user_id
     """), {'user_id': user_id}).fetchall()
-    tutor_lesson_type_ids = [row[0] for row in tutor_lesson_types]
+    tutor_lesson_type_ids = set([row[0] for row in tutor_lesson_types])
     
-    # 4. 스코어링 쿼리 구성 - 모든 학생을 대상으로 점수 계산
-    score_parts = []
-    params = {}
-    
-    # 과목 매칭 점수 (40점)
-    if tutor_subject_ids:
-        subject_placeholders = ','.join([f':subject_{i}' for i in range(len(tutor_subject_ids))])
-        score_parts.append(f"""
-            CASE WHEN EXISTS (
-                SELECT 1 FROM student_subjects ss 
-                WHERE ss.user_id = u.id 
-                AND ss.subject_id IN ({subject_placeholders})
-            ) THEN 40 ELSE 0 END
-        """)
-        for i, subject_id in enumerate(tutor_subject_ids):
-            params[f'subject_{i}'] = subject_id
-    else:
-        score_parts.append("0")
-    
-    # 지역 매칭 점수 (30점)
-    if tutor_region_ids:
-        region_placeholders = ','.join([f':region_{i}' for i in range(len(tutor_region_ids))])
-        score_parts.append(f"""
-            CASE WHEN EXISTS (
-                SELECT 1 FROM student_regions sr 
-                WHERE sr.user_id = u.id 
-                AND sr.region_id IN ({region_placeholders})
-            ) THEN 30 ELSE 0 END
-        """)
-        for i, region_id in enumerate(tutor_region_ids):
-            params[f'region_{i}'] = region_id
-    else:
-        score_parts.append("0")
-    
-    # 가격 매칭 점수 (20점)
-    if tutor_data and tutor_data[0] and tutor_data[1]:
-        score_parts.append("""
-            CASE WHEN (
-                (sp.preferred_price_max IS NULL OR sp.preferred_price_max >= :tutor_rate_min)
-                AND (sp.preferred_price_min IS NULL OR sp.preferred_price_min <= :tutor_rate_max)
-            ) THEN 20 ELSE 0 END
-        """)
-        params['tutor_rate_min'] = tutor_data[0]
-        params['tutor_rate_max'] = tutor_data[1]
-    else:
-        score_parts.append("0")
-    
-    # 수업 방식 매칭 점수 (10점)
-    if tutor_lesson_type_ids:
-        lesson_type_placeholders = ','.join([f':lesson_type_{i}' for i in range(len(tutor_lesson_type_ids))])
-        score_parts.append(f"""
-            CASE WHEN EXISTS (
-                SELECT 1 FROM student_lesson_types slt 
-                WHERE slt.user_id = u.id 
-                AND slt.lesson_type_id IN ({lesson_type_placeholders})
-            ) THEN 10 ELSE 0 END
-        """)
-        for i, lesson_type_id in enumerate(tutor_lesson_type_ids):
-            params[f'lesson_type_{i}'] = lesson_type_id
-    else:
-        score_parts.append("0")
-    
-    # 점수 합계 계산
-    score_calculation = " + ".join(score_parts)
-    
-    # 5. 전체 쿼리 구성
-    query = f"""
+    # 4. 모든 활성 학생 조회
+    students_query = """
         SELECT 
             u.id, u.name, u.email, u.created_at, u.signup_status,
-            sp.preferred_price_min, sp.preferred_price_max,
-            ({score_calculation}) as match_score
+            sp.preferred_price_min, sp.preferred_price_max
         FROM users u
         LEFT JOIN student_profiles sp ON u.id = sp.user_id
-        WHERE u.role = 'student' 
-        AND u.signup_status = 'active'
-        HAVING match_score >= :min_score
-        ORDER BY match_score DESC, u.created_at DESC
-        LIMIT :limit OFFSET :offset
+        WHERE u.role = 'student' AND u.signup_status = 'active'
     """
     
-    params['min_score'] = min_score
-    params['limit'] = limit
-    params['offset'] = offset
+    result = db.execute(text(students_query))
+    all_students = result.fetchall()
     
-    result = db.execute(text(query), params)
-    students = result.fetchall()
+    # 5. 각 학생에 대해 점수 계산
+    scored_students = []
     
-    # 6. 상세 정보 조회
-    student_list = []
-    for student in students:
+    for student in all_students:
         student_user_id = student[0]
-        match_score = student[7]  # 매칭 점수
+        score = 0
+        
+        # 과목 매칭 점수 (40점)
+        if tutor_subject_ids:
+            student_subjects = db.execute(text("""
+                SELECT subject_id FROM student_subjects WHERE user_id = :user_id
+            """), {'user_id': student_user_id}).fetchall()
+            student_subject_ids = set([row[0] for row in student_subjects])
+            
+            if tutor_subject_ids & student_subject_ids:  # 교집합이 있으면
+                score += 40
+        
+        # 지역 매칭 점수 (30점)
+        if tutor_region_ids:
+            student_regions = db.execute(text("""
+                SELECT region_id FROM student_regions WHERE user_id = :user_id
+            """), {'user_id': student_user_id}).fetchall()
+            student_region_ids = set([row[0] for row in student_regions])
+            
+            if tutor_region_ids & student_region_ids:
+                score += 30
+        
+        # 가격 매칭 점수 (20점)
+        if tutor_data and tutor_data[0] and tutor_data[1]:
+            student_price_min = student[5]
+            student_price_max = student[6]
+            
+            # 가격 범위 겹침 체크
+            if student_price_max is None or student_price_max >= tutor_data[0]:
+                if student_price_min is None or student_price_min <= tutor_data[1]:
+                    score += 20
+        
+        # 수업 방식 매칭 점수 (10점)
+        if tutor_lesson_type_ids:
+            student_lesson_types = db.execute(text("""
+                SELECT lesson_type_id FROM student_lesson_types WHERE user_id = :user_id
+            """), {'user_id': student_user_id}).fetchall()
+            student_lesson_type_ids = set([row[0] for row in student_lesson_types])
+            
+            if tutor_lesson_type_ids & student_lesson_type_ids:
+                score += 10
+        
+        # 최소 점수 이상인 경우만 추가
+        if score >= min_score:
+            scored_students.append((student, score))
+    
+    # 6. 점수순으로 정렬 (점수 높은순, 최신순)
+    scored_students.sort(key=lambda x: (-x[1], -x[0][3].timestamp() if x[0][3] else 0))
+    
+    # 7. 페이지네이션 적용
+    paginated_students = scored_students[offset:offset + limit]
+    
+    # 8. 상세 정보 조회 및 응답 생성
+    student_list = []
+    for student, match_score in paginated_students:
+        student_user_id = student[0]
         
         # 과목 조회
         subjects_result = db.execute(text("""
