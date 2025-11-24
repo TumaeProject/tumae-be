@@ -1016,6 +1016,229 @@ async def get_tutor_detail(
         regions=regions,
         lesson_types=lesson_types
     )
+# PostGIS를 활용한 거리 기반 매칭 추가 부분
+
+@app.get("/api/students", response_model=List[StudentListResponse])
+async def get_students(
+    user_id: int = Query(..., description="튜터의 user_id"),
+    db: Session = Depends(get_db),
+    min_score: int = Query(50, description="최소 매칭 점수 (0-100)"),
+    max_distance_km: float = Query(50.0, description="최대 거리 (km)"),
+    limit: int = Query(20, description="결과 개수 제한"),
+    offset: int = Query(0, description="결과 시작 위치")
+):
+    """
+    학생 목록 검색 - PostGIS 거리 기반 매칭
+    
+    매칭 점수 기준:
+    - 과목 일치: 40점
+    - 거리 기반 지역 점수: 30점
+      * 0-5km: 30점
+      * 5-10km: 25점
+      * 10-20km: 20점
+      * 20-30km: 15점
+      * 30-50km: 10점
+    - 가격 범위 일치: 20점
+    - 수업 방식 일치: 10점
+    """
+    
+    # ... (튜터 확인 및 프로필 조회는 동일)
+    
+    # 튜터의 지역 좌표 조회
+    tutor_regions_coords = db.execute(text("""
+        SELECT r.id, r.name, 
+               ST_Y(r.geom) as latitude, 
+               ST_X(r.geom) as longitude,
+               r.geom
+        FROM tutor_regions tr
+        JOIN regions r ON tr.region_id = r.id
+        WHERE tr.tutor_id = :user_id
+        AND r.geom IS NOT NULL
+    """), {'user_id': user_id}).fetchall()
+    
+    # 모든 학생 조회
+    students_query = """
+        SELECT 
+            u.id, u.name, u.email, u.created_at, u.signup_status,
+            sp.preferred_price_min, sp.preferred_price_max
+        FROM users u
+        LEFT JOIN student_profiles sp ON u.id = sp.user_id
+        WHERE u.role = 'student' AND u.signup_status = 'active'
+    """
+    
+    result = db.execute(text(students_query))
+    all_students = result.fetchall()
+    
+    scored_students = []
+    
+    for student in all_students:
+        student_user_id = student[0]
+        score = 0
+        
+        # 1. 과목 매칭 (40점) - 동일
+        # ... (이전과 동일)
+        
+        # 2. 거리 기반 지역 매칭 (30점) - PostGIS 사용
+        if tutor_regions_coords:
+            student_regions_coords = db.execute(text("""
+                SELECT r.id, r.name,
+                       ST_Y(r.geom) as latitude,
+                       ST_X(r.geom) as longitude,
+                       r.geom
+                FROM student_regions sr
+                JOIN regions r ON sr.region_id = r.id
+                WHERE sr.user_id = :user_id
+                AND r.geom IS NOT NULL
+            """), {'user_id': student_user_id}).fetchall()
+            
+            if student_regions_coords:
+                min_distance = float('inf')
+                
+                # 튜터와 학생의 모든 지역 조합에서 최소 거리 찾기
+                for tutor_region in tutor_regions_coords:
+                    tutor_geom = tutor_region[4]
+                    
+                    for student_region in student_regions_coords:
+                        student_geom = student_region[4]
+                        
+                        # PostGIS로 거리 계산 (미터 단위)
+                        distance_result = db.execute(text("""
+                            SELECT (ST_Distance(
+                                ST_Transform(:tutor_geom::geometry, 5179),
+                                ST_Transform(:student_geom::geometry, 5179)
+                            ) / 1000.0)::NUMERIC(10,2) as distance_km
+                        """), {
+                            'tutor_geom': str(tutor_geom),
+                            'student_geom': str(student_geom)
+                        }).fetchone()
+                        
+                        distance_km = distance_result[0] if distance_result else float('inf')
+                        min_distance = min(min_distance, distance_km)
+                
+                # 거리에 따른 점수 부여
+                if min_distance <= max_distance_km:
+                    if min_distance <= 5:
+                        score += 30      # 0-5km: 30점
+                    elif min_distance <= 10:
+                        score += 25      # 5-10km: 25점
+                    elif min_distance <= 20:
+                        score += 20      # 10-20km: 20점
+                    elif min_distance <= 30:
+                        score += 15      # 20-30km: 15점
+                    elif min_distance <= 50:
+                        score += 10      # 30-50km: 10점
+        
+        # 3. 가격 매칭 (20점) - 동일
+        # ... (이전과 동일)
+        
+        # 4. 수업 방식 매칭 (10점) - 동일
+        # ... (이전과 동일)
+        
+        if score >= min_score:
+            scored_students.append((student, score, min_distance if min_distance != float('inf') else None))
+    
+    # 점수순 정렬 (같은 점수면 거리 가까운 순)
+    scored_students.sort(key=lambda x: (-x[1], x[2] if x[2] else float('inf')))
+    
+    # ... (나머지 응답 생성 코드는 동일)
+
+
+# ============================================
+# 거리 계산을 위한 헬퍼 함수 (선택적)
+# ============================================
+
+def calculate_distance_postgis(db: Session, point1: tuple, point2: tuple) -> float:
+    """
+    PostGIS를 사용한 두 지점 간 거리 계산
+    
+    Args:
+        db: 데이터베이스 세션
+        point1: (latitude, longitude) 튜플
+        point2: (latitude, longitude) 튜플
+    
+    Returns:
+        거리 (km)
+    """
+    result = db.execute(text("""
+        SELECT (ST_Distance(
+            ST_Transform(
+                ST_SetSRID(ST_MakePoint(:lng1, :lat1), 4326),
+                5179
+            ),
+            ST_Transform(
+                ST_SetSRID(ST_MakePoint(:lng2, :lat2), 4326),
+                5179
+            )
+        ) / 1000.0)::NUMERIC(10,2) as distance_km
+    """), {
+        'lat1': point1[0],
+        'lng1': point1[1],
+        'lat2': point2[0],
+        'lng2': point2[1]
+    }).fetchone()
+    
+    return float(result[0]) if result else None
+
+
+# ============================================
+# 반경 내 학생 검색 (보너스 기능)
+# ============================================
+
+@app.get("/api/students/nearby")
+async def get_nearby_students(
+    user_id: int = Query(..., description="튜터의 user_id"),
+    radius_km: float = Query(10.0, description="검색 반경 (km)"),
+    db: Session = Depends(get_db)
+):
+    """
+    튜터 위치 기준 반경 내 학생 검색
+    PostGIS의 ST_DWithin 함수 사용
+    """
+    
+    # 튜터의 대표 지역 좌표 조회
+    tutor_location = db.execute(text("""
+        SELECT r.geom
+        FROM tutor_regions tr
+        JOIN regions r ON tr.region_id = r.id
+        WHERE tr.tutor_id = :user_id
+        AND r.geom IS NOT NULL
+        LIMIT 1
+    """), {'user_id': user_id}).fetchone()
+    
+    if not tutor_location:
+        raise HTTPException(status_code=404, detail="튜터의 위치 정보가 없습니다.")
+    
+    # 반경 내 학생 검색
+    students = db.execute(text("""
+        SELECT DISTINCT
+            u.id, u.name, u.email,
+            (ST_Distance(
+                ST_Transform(:tutor_geom::geometry, 5179),
+                ST_Transform(r.geom, 5179)
+            ) / 1000.0)::NUMERIC(10,2) as distance_km
+        FROM users u
+        JOIN student_regions sr ON sr.user_id = u.id
+        JOIN regions r ON r.id = sr.region_id
+        WHERE u.role = 'student'
+        AND u.signup_status = 'active'
+        AND r.geom IS NOT NULL
+        AND ST_DWithin(
+            ST_Transform(:tutor_geom::geometry, 5179),
+            ST_Transform(r.geom, 5179),
+            :radius_meters
+        )
+        ORDER BY distance_km
+    """), {
+        'tutor_geom': str(tutor_location[0]),
+        'radius_meters': radius_km * 1000
+    }).fetchall()
+    
+    return [{
+        'id': s[0],
+        'name': s[1],
+        'email': s[2],
+        'distance_km': float(s[3])  # NUMERIC을 float으로 변환
+    } for s in students]
 
 # ==========================================================
 # 🍀 헬스체크
