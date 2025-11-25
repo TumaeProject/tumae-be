@@ -288,6 +288,27 @@ class CreatePostRequest(BaseModel):
     region_id: Optional[int] = None
     tags: Optional[List[str]] = None
 
+# --- 게시글 조회 ---
+class PostAnswerResponse(BaseModel):
+    id: int
+    author_id: int
+    author_name: str
+    body: str
+    is_accepted: bool
+    created_at: str
+
+class PostDetailResponse(BaseModel):
+    id: int
+    title: str
+    body: str
+    author_id: int
+    author_name: str
+    subject_id: int
+    subject_name: str
+    region_id: Optional[int]
+    region_name: Optional[str]
+    created_at: str
+    answers: List[PostAnswerResponse] = []
 
 
 
@@ -1778,3 +1799,80 @@ def create_post(req: CreatePostRequest, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(500, f"게시글 등록 중 오류가 발생했습니다: {str(e)}")
+# ==========================================================
+# 📝 커뮤니티 - 게시물 상세 조회 (GET)
+# ==========================================================
+@app.get("/community/posts/{post_id}", status_code=200)
+def get_post_detail(post_id: int, db: Session = Depends(get_db)):
+    """게시글 상세 조회"""
+
+    try:
+        # -------------------------
+        # 1) 게시글 기본 정보 조회
+        # -------------------------
+        post = db.execute(text("""
+            SELECT 
+                p.id, p.title, p.body, p.author_id, p.subject_id, p.region_id, p.created_at,
+                u.name AS author_name,
+                s.name AS subject_name,
+                r.name AS region_name
+            FROM posts p
+            JOIN users u ON p.author_id = u.id
+            JOIN subjects s ON p.subject_id = s.id
+            LEFT JOIN regions r ON p.region_id = r.id
+            WHERE p.id = :pid
+        """), {"pid": post_id}).fetchone()
+
+        if not post:
+            raise HTTPException(404, "POST_NOT_FOUND")
+
+        # -------------------------
+        # 2) 답변 목록 조회 (answers 테이블)
+        # -------------------------
+        answers_result = db.execute(text("""
+            SELECT 
+                a.id, a.author_id, a.body, a.is_accepted, a.created_at,
+                u.name AS author_name
+            FROM answers a
+            JOIN users u ON a.author_id = u.id
+            WHERE a.post_id = :pid
+            ORDER BY a.created_at ASC
+        """), {"pid": post_id}).fetchall()
+
+        answers = []
+        for row in answers_result:
+            answers.append({
+                "id": row[0],
+                "author_id": row[1],
+                "author_name": row[5],
+                "body": row[2],
+                "is_accepted": row[3],
+                "created_at": str(row[4])
+            })
+
+        # -------------------------
+        # 3) 응답 생성
+        # -------------------------
+        return {
+            "message": "SUCCESS",
+            "status_code": 200,
+            "data": {
+                "id": post[0],
+                "title": post[1],
+                "body": post[2],
+                "author_id": post[3],
+                "author_name": post[7],
+                "subject_id": post[4],
+                "subject_name": post[8],
+                "region_id": post[5],
+                "region_name": post[9],
+                "created_at": str(post[6]),
+                "answers": answers
+            }
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(500, f"게시글 조회 중 오류 발생: {str(e)}")
