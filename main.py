@@ -311,6 +311,10 @@ class PostDetailResponse(BaseModel):
     answers: List[PostAnswerResponse] = []
 
 
+# -----------댓글 달기------------------
+class CreateAnswerRequest(BaseModel):
+    author_id: int
+    body: str
 
 # ==========================================================
 # 🚀 공통 회원가입 (User 생성)
@@ -772,6 +776,10 @@ def student_details(req: StudentDetailsRequest, db: Session = Depends(get_db)):
 
 # # ==========================================================
 # # 🍀 헬스체크
+@app.get("/")
+def root():
+    return {"message": "SUCCESS"}
+
 # # ==========================================================
 # # ==========================================================
 # # 🏠 루트
@@ -1876,3 +1884,77 @@ def get_post_detail(post_id: int, db: Session = Depends(get_db)):
 
     except Exception as e:
         raise HTTPException(500, f"게시글 조회 중 오류 발생: {str(e)}")
+# -----------------------------------------
+# 📝 댓글(답변) 등록 API
+# -----------------------------------------
+@app.post("/community/posts/{post_id}/answers", status_code=201)
+def create_answer(
+    post_id: int = Path(..., description="댓글을 추가할 게시글 ID"),
+    req: CreateAnswerRequest = Depends(),
+    db: Session = Depends(get_db)
+):
+    """특정 게시물에 댓글(답변) 등록"""
+
+    try:
+        # -----------------------------
+        # 1️⃣ post_id 존재 여부 확인
+        # -----------------------------
+        post_check = db.execute(
+            text("SELECT id FROM posts WHERE id = :post_id"),
+            {"post_id": post_id}
+        ).fetchone()
+
+        if not post_check:
+            raise HTTPException(404, "POST_NOT_FOUND")
+
+        # -----------------------------
+        # 2️⃣ author_id 존재 여부 확인
+        # -----------------------------
+        author_check = db.execute(
+            text("SELECT id FROM users WHERE id = :author_id"),
+            {"author_id": req.author_id}
+        ).fetchone()
+
+        if not author_check:
+            raise HTTPException(404, "USER_NOT_FOUND")
+
+        if not req.body or req.body.strip() == "":
+            raise HTTPException(400, "INVALID_INPUT")
+
+        # -----------------------------
+        # 3️⃣ 답변 저장
+        # -----------------------------
+        result = db.execute(text("""
+            INSERT INTO answers (post_id, author_id, body, is_accepted, created_at)
+            VALUES (:post_id, :author_id, :body, false, NOW())
+            RETURNING id, post_id, author_id, body, is_accepted, created_at
+        """), {
+            "post_id": post_id,
+            "author_id": req.author_id,
+            "body": req.body
+        })
+
+        db.commit()
+        answer = result.fetchone()
+
+        # -----------------------------
+        # 4️⃣ Response 반환
+        # -----------------------------
+        return {
+            "message": "SUCCESS",
+            "status_code": 201,
+            "data": {
+                "answer_id": answer.id,
+                "post_id": answer.post_id,
+                "author_id": answer.author_id,
+                "body": answer.body,
+                "is_accepted": answer.is_accepted,
+                "created_at": str(answer.created_at)
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, detail=f"댓글 등록 중 오류: {str(e)}")
