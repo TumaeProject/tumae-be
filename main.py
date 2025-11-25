@@ -316,6 +316,10 @@ class CreateAnswerRequest(BaseModel):
     author_id: int
     body: str
 
+# ------------댓글 채택-----------------
+class AcceptAnswerRequest(BaseModel):
+    user_id: int   # 게시글 작성자여야 함
+
 # ==========================================================
 # 🚀 공통 회원가입 (User 생성)
 # ==========================================================
@@ -1958,3 +1962,81 @@ def create_answer(
     except Exception as e:
         db.rollback()
         raise HTTPException(500, detail=f"댓글 등록 중 오류: {str(e)}")
+#  답변 채택 API
+# -----------------------------------------
+@app.patch("/community/answers/{answer_id}/accept", status_code=200)
+def accept_answer(
+    answer_id: int = Path(..., description="채택할 답변 ID"),
+    req: AcceptAnswerRequest = Depends(),
+    db: Session = Depends(get_db)
+):
+    """게시글 작성자가 특정 답변을 채택"""
+
+    try:
+        # ------------------------------------------------
+        # 1️⃣ answer_id 존재 확인 + post_id, author_id 가져오기
+        # ------------------------------------------------
+        answer = db.execute(text("""
+            SELECT id, post_id, author_id, is_accepted
+            FROM answers
+            WHERE id = :answer_id
+        """), {"answer_id": answer_id}).fetchone()
+
+        if not answer:
+            raise HTTPException(404, "ANSWER_NOT_FOUND")
+
+        post_id = answer.post_id
+
+        # ------------------------------------------------
+        # 2️⃣ 게시글 작성자가 맞는지 확인 (권한 체크)
+        # ------------------------------------------------
+        post = db.execute(text("""
+            SELECT author_id
+            FROM posts
+            WHERE id = :post_id
+        """), {"post_id": post_id}).fetchone()
+
+        if not post:
+            raise HTTPException(404, "POST_NOT_FOUND")
+
+        if post.author_id != req.user_id:
+            raise HTTPException(403, "NOT_POST_AUTHOR")
+
+        # ------------------------------------------------
+        # 3️⃣ 모든 답변의 is_accepted=false 초기화 (게시글 당 하나만)
+        # ------------------------------------------------
+        db.execute(text("""
+            UPDATE answers
+            SET is_accepted = false
+            WHERE post_id = :post_id
+        """), {"post_id": post_id})
+
+        # ------------------------------------------------
+        # 4️⃣ 대상 답변만 is_accepted = true 설정
+        # ------------------------------------------------
+        updated = db.execute(text("""
+            UPDATE answers
+            SET is_accepted = true
+            WHERE id = :answer_id
+            RETURNING id, post_id, is_accepted
+        """), {
+            "answer_id": answer_id
+        }).fetchone()
+
+        db.commit()
+
+        return {
+            "message": "SUCCESS",
+            "status_code": 200,
+            "data": {
+                "answer_id": updated.id,
+                "post_id": updated.post_id,
+                "is_accepted": updated.is_accepted
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, detail=f"답변 채택 중 오류: {str(e)}")
