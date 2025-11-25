@@ -151,9 +151,7 @@ class StudentDetailsRequest(BaseModel):
     preferred_price_min: int
     preferred_price_max: int
     student_skill_levels: List[int]
-<<<<<<< HEAD
     age_id: int
-=======
     student_age_id: int  # 단일 선택
 
 
@@ -203,7 +201,7 @@ class TutorDetailsRequest(BaseModel):
     hourly_rate_min: int
     hourly_rate_max: int
     tutor_regions: List[int]
->>>>>>> b6941b6 (add post api)
+
     
 # --- 학생 온보딩 ---
 class StudentAvailability(BaseModel):
