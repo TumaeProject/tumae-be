@@ -421,6 +421,56 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"로그인 중 오류가 발생했습니다: {str(e)}")
 
+@app.delete("/auth/users/{user_id}", status_code=200)
+def delete_user(user_id: int):
+
+    # 1) 유저 존재 여부 검사
+    target_user = None
+    target_email = None
+
+    for email, u in fake_users.items():
+        if u["user_id"] == user_id:
+            target_user = u
+            target_email = email
+            break
+
+    if not target_user:
+        raise HTTPException(404, "USER_NOT_FOUND")
+
+    # 2) 해당 유저의 게시글 삭제
+    deleted_posts = []
+    for pid, post in list(fake_posts.items()):
+        if post["author_id"] == user_id:
+            deleted_posts.append(pid)
+            del fake_posts[pid]
+
+    # 3) 해당 유저의 댓글 삭제
+    deleted_answers = []
+    for aid, ans in list(fake_answers.items()):
+        if ans["author_id"] == user_id:
+            deleted_answers.append(aid)
+            del fake_answers[aid]
+
+    # 4) users 삭제
+    del fake_users[target_email]
+
+    # 5) 온보딩 데이터 삭제
+    if user_id in fake_tutor_details:
+        del fake_tutor_details[user_id]
+    if user_id in fake_student_details:
+        del fake_student_details[user_id]
+
+    return {
+        "message": "SUCCESS",
+        "status_code": 200,
+        "data": {
+            "deleted_user_id": user_id,
+            "deleted_posts": len(deleted_posts),
+            "deleted_answers": len(deleted_answers)
+        }
+    }
+
+
 # ==========================================================
 # 🧑‍🏫 튜터 온보딩 (PATCH)
 # ==========================================================
