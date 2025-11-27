@@ -422,54 +422,92 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"로그인 중 오류가 발생했습니다: {str(e)}")
 
 @app.delete("/auth/users/{user_id}", status_code=200)
-def delete_user(user_id: int):
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    회원 탈퇴 (DB 완전 삭제)
+    - users
+    - posts
+    - answers
+    - tutor/student onboarding
+    - lesson requests, sessions, messages
+    등 연결된 모든 데이터를 삭제
+    """
 
-    # 1) 유저 존재 여부 검사
-    target_user = None
-    target_email = None
+    try:
+        # 1) 사용자 체크
+        user = db.execute(
+            text("SELECT id FROM users WHERE id = :uid"),
+            {"uid": user_id}
+        ).fetchone()
 
-    for email, u in fake_users.items():
-        if u["user_id"] == user_id:
-            target_user = u
-            target_email = email
-            break
+        if not user:
+            raise HTTPException(404, "USER_NOT_FOUND")
 
-    if not target_user:
-        raise HTTPException(404, "USER_NOT_FOUND")
+        # -------------------------
+        # 삭제 순서 중요 (FK 충돌 방지)
+        # -------------------------
 
-    # 2) 해당 유저의 게시글 삭제
-    deleted_posts = []
-    for pid, post in list(fake_posts.items()):
-        if post["author_id"] == user_id:
-            deleted_posts.append(pid)
-            del fake_posts[pid]
+        # 1) 댓글 삭제
+        deleted_answers = db.execute(
+            text("DELETE FROM answers WHERE author_id = :uid RETURNING id"),
+            {"uid": user_id}
+        ).fetchall()
 
-    # 3) 해당 유저의 댓글 삭제
-    deleted_answers = []
-    for aid, ans in list(fake_answers.items()):
-        if ans["author_id"] == user_id:
-            deleted_answers.append(aid)
-            del fake_answers[aid]
+        # 2) 게시글 삭제
+        deleted_posts = db.execute(
+            text("DELETE FROM posts WHERE author_id = :uid RETURNING id"),
+            {"uid": user_id}
+        ).fetchall()
 
-    # 4) users 삭제
-    del fake_users[target_email]
+        # 3) 온보딩 관련 삭제
+        db.execute(text("DELETE FROM tutor_profiles WHERE user_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM student_profiles WHERE user_id = :uid"), {"uid": user_id})
 
-    # 5) 온보딩 데이터 삭제
-    if user_id in fake_tutor_details:
-        del fake_tutor_details[user_id]
-    if user_id in fake_student_details:
-        del fake_student_details[user_id]
+        db.execute(text("DELETE FROM tutor_subjects WHERE tutor_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM tutor_lesson_types WHERE tutor_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM tutor_skill_levels WHERE tutor_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM tutor_availabilities WHERE tutor_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM tutor_regions WHERE tutor_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM tutor_goals WHERE tutor_id = :uid"), {"uid": user_id})
 
-    return {
-        "message": "SUCCESS",
-        "status_code": 200,
-        "data": {
-            "deleted_user_id": user_id,
-            "deleted_posts": len(deleted_posts),
-            "deleted_answers": len(deleted_answers)
+        db.execute(text("DELETE FROM student_subjects WHERE user_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM student_lesson_types WHERE user_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM student_regions WHERE user_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM student_availabilities WHERE user_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM student_goals WHERE user_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM student_skill_levels WHERE user_id = :uid"), {"uid": user_id})
+
+        # 4) 매칭/세션/메시지/알림 삭제
+        db.execute(text("DELETE FROM lesson_requests WHERE student_id = :uid OR tutor_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM sessions WHERE student_id = :uid OR tutor_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM messages WHERE sender_id = :uid OR receiver_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM notifications WHERE user_id = :uid"), {"uid": user_id})
+        db.execute(text("DELETE FROM event_logs WHERE user_id = :uid OR tutor_id = :uid"), {"uid": user_id})
+
+        # 5) 최종적으로 users 삭제
+        db.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": user_id})
+
+        db.commit()
+
+        return {
+            "message": "SUCCESS",
+            "status_code": 200,
+            "data": {
+                "deleted_user_id": user_id,
+                "deleted_posts": len(deleted_posts),
+                "deleted_answers": len(deleted_answers)
+            }
         }
-    }
 
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"INTERNAL_SERVER_ERROR: {str(e)}")
 
 # ==========================================================
 # 🧑‍🏫 튜터 온보딩 (PATCH)
