@@ -1612,3 +1612,100 @@ def accept_answer(
     except Exception as e:
         db.rollback()
         raise HTTPException(500, detail=f"답변 채택 중 오류: {str(e)}")
+
+#----게시물 리스트 조회 API-----
+@app.get("/community/posts", status_code=200)
+def list_posts(
+    subject_id: int = Query(None, description="과목 필터 (subjects.id)"),
+    region_id: int = Query(None, description="지역 필터 (regions.id)"),
+    page: int = Query(1, ge=1, description="페이지 번호"),
+    limit: int = Query(20, ge=1, le=100, description="페이지당 개수"),
+    order: str = Query("latest", description="정렬 기준 latest | oldest"),
+    db: Session = Depends(get_db)
+):
+    """
+    게시글 목록 조회 (필터 + 페이징 + 정렬)
+    """
+
+    try:
+        offset = (page - 1) * limit
+
+        # 정렬 기준
+        order_clause = "p.created_at DESC" if order == "latest" else "p.created_at ASC"
+
+        # ====== (1) 전체 게시글 개수 조회 ======
+        count_query = """
+            SELECT COUNT(*) 
+            FROM posts p 
+            WHERE 1=1
+        """
+        count_params = {}
+
+        if subject_id:
+            count_query += " AND p.subject_id = :subject_id"
+            count_params["subject_id"] = subject_id
+
+        if region_id:
+            count_query += " AND p.region_id = :region_id"
+            count_params["region_id"] = region_id
+
+        total_count = db.execute(text(count_query), count_params).scalar()
+
+        # ====== (2) 실제 게시글 조회 ======
+        query = f"""
+            SELECT 
+                p.id, p.title, p.body, p.author_id, p.subject_id, p.region_id, p.created_at,
+                u.name AS author_name,
+                s.name AS subject_name,
+                r.name AS region_name
+            FROM posts p
+            JOIN users u ON p.author_id = u.id
+            LEFT JOIN subjects s ON p.subject_id = s.id
+            LEFT JOIN regions r ON p.region_id = r.id
+            WHERE 1=1
+        """
+
+        params = {}
+
+        if subject_id:
+            query += " AND p.subject_id = :subject_id"
+            params["subject_id"] = subject_id
+
+        if region_id:
+            query += " AND p.region_id = :region_id"
+            params["region_id"] = region_id
+
+        query += f" ORDER BY {order_clause} LIMIT :limit OFFSET :offset"
+        params["limit"] = limit
+        params["offset"] = offset
+
+        rows = db.execute(text(query), params).fetchall()
+
+        posts = []
+        for row in rows:
+            posts.append({
+                "id": row.id,
+                "title": row.title,
+                "body": row.body,
+                "author_id": row.author_id,
+                "author_name": row.author_name,
+                "subject_id": row.subject_id,
+                "subject_name": row.subject_name,
+                "region_id": row.region_id,
+                "region_name": row.region_name,
+                "created_at": row.created_at
+            })
+
+        return {
+            "message": "SUCCESS",
+            "status_code": 200,
+            "data": {
+                "total_count": total_count,
+                "page": page,
+                "limit": limit,
+                "posts": posts
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(500, f"INTERNAL_SERVER_ERROR: {str(e)}")
