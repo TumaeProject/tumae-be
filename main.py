@@ -1739,3 +1739,275 @@ def accept_answer(
     except Exception as e:
         db.rollback()
         raise HTTPException(500, detail=f"답변 채택 중 오류: {str(e)}")
+
+# ==========================================================
+# 🌐 WebSocket 엔드포인트 (실시간 상담)
+# ==========================================================
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: int):
+    # 직접 연결 수락
+    await websocket.accept()
+    manager.active_connections[user_id] = websocket
+    print(f"✅ 사용자 {user_id} WebSocket 연결됨")
+
+    try:
+        while True:
+            # 클라이언트로부터 메시지 수신
+            data = await websocket.receive_json()
+            message_type = data.get("type")
+            
+            if message_type == "request_counseling":
+                # 상담 신청
+                tutor_id = data["tutor_id"]
+                student_id = data["student_id"]
+                request_id = f"req_{datetime.now().timestamp()}"
+                
+                await manager.request_counseling(tutor_id, student_id, request_id)
+                
+                # 신청자에게 확인 메시지
+                await manager.send_personal_message({
+                    "type": "request_sent",
+                    "data": {"request_id": request_id}
+                }, student_id)
+            
+            elif message_type == "accept_counseling":
+                # 상담 수락
+                request_id = data["request_id"]
+                tutor_id = data["tutor_id"]
+                student_id = data["student_id"]
+                
+                await manager.accept_counseling(tutor_id, student_id, request_id)
+            
+            elif message_type == "reject_counseling":
+                # 상담 거절
+                request_id = data["request_id"]
+                tutor_id = data["tutor_id"]
+                student_id = data["student_id"]
+                
+                # 학생에게 거절 알림
+                await manager.send_personal_message({
+                    "type": "counseling_rejected",
+                    "data": {"request_id": request_id}
+                }, student_id)
+                
+                # 보류 중인 요청 제거
+                if tutor_id in manager.pending_requests:
+                    manager.pending_requests[tutor_id] = [
+                        req for req in manager.pending_requests[tutor_id] 
+                        if req["request_id"] != request_id
+                    ]
+            
+            elif message_type == "send_message":
+                # 메시지 전송
+                session_id = data["session_id"]
+                sender_id = data["sender_id"]
+                message = data["message"]
+                
+                success = await manager.send_message(session_id, sender_id, message)
+                if not success:
+                    await manager.send_personal_message({
+                        "type": "error",
+                        "data": {"message": "세션을 찾을 수 없습니다."}
+                    }, sender_id)
+            
+            elif message_type == "end_counseling":
+                # 상담 종료
+                session_id = data["session_id"]
+                await manager.end_counseling(session_id)
+            
+            elif message_type == "ping":
+                # 연결 유지용 핑
+                await websocket.send_json({"type": "pong"})
+    
+    except WebSocketDisconnect:
+        manager.disconnect(user_id)
+        print(f"사용자 {user_id} 연결이 끊어졌습니다.")
+    except Exception as e:
+        print(f"WebSocket 오류: {str(e)}")
+        manager.disconnect(user_id)
+
+# ==========================================================
+# 💬 실시간 상담 REST API
+# ==========================================================
+
+@app.get("/counseling/sessions")
+async def get_active_sessions():
+    """현재 활성화된 상담 세션 목록 조회"""
+    return {
+        "message": "SUCCESS",
+        "status_code": 200,
+        "data": {
+            "active_sessions": list(manager.counseling_sessions.keys()),
+            "session_count": len(manager.counseling_sessions)
+        }
+    }
+
+@app.get("/counseling/pending-requests/{tutor_id}")
+async def get_pending_requests(tutor_id: int):
+    """특정 튜터의 대기 중인 상담 요청 조회"""
+    requests = manager.pending_requests.get(tutor_id, [])
+    return {
+        "message": "SUCCESS",
+        "status_code": 200,
+        "data": {
+            "pending_requests": requests,
+            "count": len(requests)
+        }
+    }
+
+@app.get("/counseling/session/{session_id}")
+async def get_session_info(session_id: str):
+    """특정 세션 정보 조회"""
+    session = manager.counseling_sessions.get(session_id)
+    
+    if not session:
+        raise HTTPException(404, "SESSION_NOT_FOUND")
+    
+    return {
+        "message": "SUCCESS",
+        "status_code": 200,
+        "data": session
+    }
+
+# ==========================================================
+# 💾 데이터베이스 테이블 생성 (앱 시작 시)
+# ==========================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """앱 시작 시 실행 - 상담 관련 테이블 생성"""
+    if engine:
+        try:
+            with engine.connect() as conn:
+                # 상담 세션 테이블 생성
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS counseling_sessions (
+                        id SERIAL PRIMARY KEY,
+                        session_id VARCHAR(255) UNIQUE NOT NULL,
+                        tutor_id INTEGER NOT NULL REFERENCES users(id),
+                        student_id INTEGER NOT NULL REFERENCES users(id),
+                        started_at TIMESTAMP DEFAULT NOW(),
+                        ended_at TIMESTAMP,
+                        status VARCHAR(50) DEFAULT 'active',
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """))
+                
+                # 상담 메시지 테이블 생성
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS counseling_messages (
+                        id SERIAL PRIMARY KEY,
+                        session_id VARCHAR(255) NOT NULL,
+                        sender_id INTEGER NOT NULL REFERENCES users(id),
+                        message TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """))
+                
+                conn.commit()
+                print("✅ 상담 관련 데이터베이스 테이블이 확인/생성되었습니다.")
+        except Exception as e:
+            print(f"⚠️  테이블 생성 중 오류 (이미 존재할 수 있음): {str(e)}")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+#----게시물 리스트 조회 API-----
+@app.get("/community/posts", status_code=200)
+def list_posts(
+    subject_id: int = Query(None, description="과목 필터 (subjects.id)"),
+    region_id: int = Query(None, description="지역 필터 (regions.id)"),
+    page: int = Query(1, ge=1, description="페이지 번호"),
+    limit: int = Query(20, ge=1, le=100, description="페이지당 개수"),
+    order: str = Query("latest", description="정렬 기준 latest | oldest"),
+    db: Session = Depends(get_db)
+):
+    """
+    게시글 목록 조회 (필터 + 페이징 + 정렬)
+    """
+
+    try:
+        offset = (page - 1) * limit
+
+        # 정렬 기준
+        order_clause = "p.created_at DESC" if order == "latest" else "p.created_at ASC"
+
+        # ====== (1) 전체 게시글 개수 조회 ======
+        count_query = """
+            SELECT COUNT(*) 
+            FROM posts p 
+            WHERE 1=1
+        """
+        count_params = {}
+
+        if subject_id:
+            count_query += " AND p.subject_id = :subject_id"
+            count_params["subject_id"] = subject_id
+
+        if region_id:
+            count_query += " AND p.region_id = :region_id"
+            count_params["region_id"] = region_id
+
+        total_count = db.execute(text(count_query), count_params).scalar()
+
+        # ====== (2) 실제 게시글 조회 ======
+        query = f"""
+            SELECT 
+                p.id, p.title, p.body, p.author_id, p.subject_id, p.region_id, p.created_at,
+                u.name AS author_name,
+                s.name AS subject_name,
+                r.name AS region_name
+            FROM posts p
+            JOIN users u ON p.author_id = u.id
+            LEFT JOIN subjects s ON p.subject_id = s.id
+            LEFT JOIN regions r ON p.region_id = r.id
+            WHERE 1=1
+        """
+
+        params = {}
+
+        if subject_id:
+            query += " AND p.subject_id = :subject_id"
+            params["subject_id"] = subject_id
+
+        if region_id:
+            query += " AND p.region_id = :region_id"
+            params["region_id"] = region_id
+
+        query += f" ORDER BY {order_clause} LIMIT :limit OFFSET :offset"
+        params["limit"] = limit
+        params["offset"] = offset
+
+        rows = db.execute(text(query), params).fetchall()
+
+        posts = []
+        for row in rows:
+            posts.append({
+                "id": row.id,
+                "title": row.title,
+                "body": row.body,
+                "author_id": row.author_id,
+                "author_name": row.author_name,
+                "subject_id": row.subject_id,
+                "subject_name": row.subject_name,
+                "region_id": row.region_id,
+                "region_name": row.region_name,
+                "created_at": row.created_at
+            })
+
+        return {
+            "message": "SUCCESS",
+            "status_code": 200,
+            "data": {
+                "total_count": total_count,
+                "page": page,
+                "limit": limit,
+                "posts": posts
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(500, f"INTERNAL_SERVER_ERROR: {str(e)}")
+
