@@ -1,14 +1,15 @@
-from fastapi import FastAPI, HTTPException, status, Query, Path, Depends
+from fastapi import FastAPI, HTTPException, status, Query, Path, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 from jose import jwt
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Dict
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 import os
+import json
 
 # ==========================================================
 # 🔐 환경변수 로드 (.env)
@@ -36,8 +37,8 @@ def get_db():
 
 app = FastAPI(
     title="Tumae API (코딩 과외 매칭 플랫폼)",
-    description="회원가입/로그인/로그아웃 + 학생/튜터 매칭 API",
-    version="3.1.0",
+    description="회원가입/로그인/로그아웃 + 학생/튜터 매칭 + 실시간 상담 API",
+    version="4.0.0 (with Real-time Counseling)",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -94,6 +95,132 @@ def get_user_by_id(db: Session, user_id: int):
         {"user_id": user_id}
     )
     return result.fetchone()
+
+# ==========================================================
+# 💬 WebSocket 연결 관리자 (실시간 상담 기능)
+# ==========================================================
+
+class ConnectionManager:
+    """WebSocket 연결 및 상담 세션 관리"""
+    
+    def __init__(self):
+        # user_id -> WebSocket 연결 매핑
+        self.active_connections: Dict[int, WebSocket] = {}
+        # session_id -> {tutor_id, student_id} 매핑
+        self.counseling_sessions: Dict[str, dict] = {}
+        # user_id -> pending_requests 매핑
+        self.pending_requests: Dict[int, List[dict]] = {}
+
+    async def connect(self, websocket: WebSocket, user_id: int):
+        """WebSocket 연결 수락 및 사용자 등록"""
+        await websocket.accept()
+        self.active_connections[user_id] = websocket
+        print(f"✅ 사용자 {user_id} 연결됨")
+
+    def disconnect(self, user_id: int):
+        """WebSocket 연결 해제"""
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
+            print(f"❌ 사용자 {user_id} 연결 해제")
+
+    async def send_personal_message(self, message: dict, user_id: int):
+        """특정 사용자에게 메시지 전송"""
+        if user_id in self.active_connections:
+            await self.active_connections[user_id].send_json(message)
+
+    async def request_counseling(self, tutor_id: int, student_id: int, request_id: str):
+        """상담 신청 전송"""
+        if tutor_id not in self.pending_requests:
+            self.pending_requests[tutor_id] = []
+        
+        request_data = {
+            "request_id": request_id,
+            "student_id": student_id,
+            "timestamp": datetime.now().isoformat()
+        }
+        self.pending_requests[tutor_id].append(request_data)
+        
+        await self.send_personal_message({
+            "type": "counseling_request",
+            "data": request_data
+        }, tutor_id)
+
+    async def accept_counseling(self, tutor_id: int, student_id: int, request_id: str):
+        """상담 수락"""
+        session_id = f"session_{datetime.now().timestamp()}"
+        
+        self.counseling_sessions[session_id] = {
+            "tutor_id": tutor_id,
+            "student_id": student_id,
+            "started_at": datetime.now().isoformat()
+        }
+        
+        # 보류 중인 요청 제거
+        if tutor_id in self.pending_requests:
+            self.pending_requests[tutor_id] = [
+                req for req in self.pending_requests[tutor_id] 
+                if req["request_id"] != request_id
+            ]
+        
+        # 학생에게 수락 알림
+        await self.send_personal_message({
+            "type": "counseling_accepted",
+            "data": {
+                "session_id": session_id,
+                "tutor_id": tutor_id
+            }
+        }, student_id)
+        
+        # 튜터에게도 세션 시작 알림
+        await self.send_personal_message({
+            "type": "counseling_started",
+            "data": {
+                "session_id": session_id,
+                "student_id": student_id
+            }
+        }, tutor_id)
+
+    async def send_message(self, session_id: str, sender_id: int, message: str):
+        """세션 내 메시지 전송"""
+        if session_id not in self.counseling_sessions:
+            return False
+        
+        session = self.counseling_sessions[session_id]
+        recipient_id = (
+            session["student_id"] if sender_id == session["tutor_id"] 
+            else session["tutor_id"]
+        )
+        
+        message_data = {
+            "type": "message",
+            "data": {
+                "session_id": session_id,
+                "sender_id": sender_id,
+                "message": message,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+        
+        await self.send_personal_message(message_data, recipient_id)
+        return True
+
+    async def end_counseling(self, session_id: str):
+        """상담 종료"""
+        if session_id in self.counseling_sessions:
+            session = self.counseling_sessions[session_id]
+            
+            # 양측에 종료 알림
+            for user_id in [session["tutor_id"], session["student_id"]]:
+                await self.send_personal_message({
+                    "type": "counseling_ended",
+                    "data": {"session_id": session_id}
+                }, user_id)
+            
+            del self.counseling_sessions[session_id]
+
+# ConnectionManager 인스턴스 생성
+manager = ConnectionManager()
+
 
 # ==========================================================
 # 📌 Request/Response Models
@@ -1612,3 +1739,175 @@ def accept_answer(
     except Exception as e:
         db.rollback()
         raise HTTPException(500, detail=f"답변 채택 중 오류: {str(e)}")
+
+# ==========================================================
+# 🌐 WebSocket 엔드포인트 (실시간 상담)
+# ==========================================================
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: int):
+    """WebSocket 연결 엔드포인트"""
+    await manager.connect(websocket, user_id)
+    
+    try:
+        while True:
+            # 클라이언트로부터 메시지 수신
+            data = await websocket.receive_json()
+            message_type = data.get("type")
+            
+            if message_type == "request_counseling":
+                # 상담 신청
+                tutor_id = data["tutor_id"]
+                student_id = data["student_id"]
+                request_id = f"req_{datetime.now().timestamp()}"
+                
+                await manager.request_counseling(tutor_id, student_id, request_id)
+                
+                # 신청자에게 확인 메시지
+                await manager.send_personal_message({
+                    "type": "request_sent",
+                    "data": {"request_id": request_id}
+                }, student_id)
+            
+            elif message_type == "accept_counseling":
+                # 상담 수락
+                request_id = data["request_id"]
+                tutor_id = data["tutor_id"]
+                student_id = data["student_id"]
+                
+                await manager.accept_counseling(tutor_id, student_id, request_id)
+            
+            elif message_type == "reject_counseling":
+                # 상담 거절
+                request_id = data["request_id"]
+                tutor_id = data["tutor_id"]
+                student_id = data["student_id"]
+                
+                # 학생에게 거절 알림
+                await manager.send_personal_message({
+                    "type": "counseling_rejected",
+                    "data": {"request_id": request_id}
+                }, student_id)
+                
+                # 보류 중인 요청 제거
+                if tutor_id in manager.pending_requests:
+                    manager.pending_requests[tutor_id] = [
+                        req for req in manager.pending_requests[tutor_id] 
+                        if req["request_id"] != request_id
+                    ]
+            
+            elif message_type == "send_message":
+                # 메시지 전송
+                session_id = data["session_id"]
+                sender_id = data["sender_id"]
+                message = data["message"]
+                
+                success = await manager.send_message(session_id, sender_id, message)
+                if not success:
+                    await manager.send_personal_message({
+                        "type": "error",
+                        "data": {"message": "세션을 찾을 수 없습니다."}
+                    }, sender_id)
+            
+            elif message_type == "end_counseling":
+                # 상담 종료
+                session_id = data["session_id"]
+                await manager.end_counseling(session_id)
+            
+            elif message_type == "ping":
+                # 연결 유지용 핑
+                await websocket.send_json({"type": "pong"})
+    
+    except WebSocketDisconnect:
+        manager.disconnect(user_id)
+        print(f"사용자 {user_id} 연결이 끊어졌습니다.")
+    except Exception as e:
+        print(f"WebSocket 오류: {str(e)}")
+        manager.disconnect(user_id)
+
+# ==========================================================
+# 💬 실시간 상담 REST API
+# ==========================================================
+
+@app.get("/counseling/sessions")
+async def get_active_sessions():
+    """현재 활성화된 상담 세션 목록 조회"""
+    return {
+        "message": "SUCCESS",
+        "status_code": 200,
+        "data": {
+            "active_sessions": list(manager.counseling_sessions.keys()),
+            "session_count": len(manager.counseling_sessions)
+        }
+    }
+
+@app.get("/counseling/pending-requests/{tutor_id}")
+async def get_pending_requests(tutor_id: int):
+    """특정 튜터의 대기 중인 상담 요청 조회"""
+    requests = manager.pending_requests.get(tutor_id, [])
+    return {
+        "message": "SUCCESS",
+        "status_code": 200,
+        "data": {
+            "pending_requests": requests,
+            "count": len(requests)
+        }
+    }
+
+@app.get("/counseling/session/{session_id}")
+async def get_session_info(session_id: str):
+    """특정 세션 정보 조회"""
+    session = manager.counseling_sessions.get(session_id)
+    
+    if not session:
+        raise HTTPException(404, "SESSION_NOT_FOUND")
+    
+    return {
+        "message": "SUCCESS",
+        "status_code": 200,
+        "data": session
+    }
+
+# ==========================================================
+# 💾 데이터베이스 테이블 생성 (앱 시작 시)
+# ==========================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """앱 시작 시 실행 - 상담 관련 테이블 생성"""
+    if engine:
+        try:
+            with engine.connect() as conn:
+                # 상담 세션 테이블 생성
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS counseling_sessions (
+                        id SERIAL PRIMARY KEY,
+                        session_id VARCHAR(255) UNIQUE NOT NULL,
+                        tutor_id INTEGER NOT NULL REFERENCES users(id),
+                        student_id INTEGER NOT NULL REFERENCES users(id),
+                        started_at TIMESTAMP DEFAULT NOW(),
+                        ended_at TIMESTAMP,
+                        status VARCHAR(50) DEFAULT 'active',
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """))
+                
+                # 상담 메시지 테이블 생성
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS counseling_messages (
+                        id SERIAL PRIMARY KEY,
+                        session_id VARCHAR(255) NOT NULL,
+                        sender_id INTEGER NOT NULL REFERENCES users(id),
+                        message TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """))
+                
+                conn.commit()
+                print("✅ 상담 관련 데이터베이스 테이블이 확인/생성되었습니다.")
+        except Exception as e:
+            print(f"⚠️  테이블 생성 중 오류 (이미 존재할 수 있음): {str(e)}")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
