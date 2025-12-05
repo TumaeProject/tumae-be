@@ -2191,6 +2191,102 @@ async def get_message(
         "reply_to": row[11]
     }
 
+@app.get("/messages/{message_id}/thread", tags=["쪽지함"])
+async def get_message_thread(
+    message_id: int,
+    user_id: int = Query(..., description="사용자 ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    쪽지 답장 체인 조회 (Gmail 스타일)
+    - 원본 메시지부터 최신 답장까지 시간순으로 정렬
+    """
+    # 1. 현재 메시지 정보 가져오기
+    current_msg = db.execute(text("""
+        SELECT id, subject, reply_to, sender_id, receiver_id
+        FROM messages
+        WHERE id = :message_id
+    """), {"message_id": message_id}).fetchone()
+    
+    if not current_msg:
+        raise HTTPException(status_code=404, detail="쪽지를 찾을 수 없습니다.")
+    
+    # 2. 루트 메시지 찾기 (reply_to를 역순으로 추적)
+    root_id = current_msg[0]
+    current_reply_to = current_msg[2]
+    
+    while current_reply_to:
+        parent = db.execute(text("""
+            SELECT id, reply_to
+            FROM messages
+            WHERE id = :id
+        """), {"id": current_reply_to}).fetchone()
+        
+        if not parent:
+            break
+        
+        root_id = parent[0]
+        current_reply_to = parent[1]
+    
+    # 3. 루트 메시지부터 모든 답장 가져오기 (재귀 CTE 사용)
+    result = db.execute(text("""
+        WITH RECURSIVE message_thread AS (
+            -- 루트 메시지
+            SELECT 
+                m.id, m.sender_id, s.name as sender_name,
+                m.receiver_id, r.name as receiver_name,
+                m.subject, m.body, m.is_read, m.is_starred,
+                m.created_at, m.read_at, m.reply_to,
+                0 as depth
+            FROM messages m
+            JOIN users s ON m.sender_id = s.id
+            JOIN users r ON m.receiver_id = r.id
+            WHERE m.id = :root_id
+            
+            UNION ALL
+            
+            -- 답장들
+            SELECT 
+                m.id, m.sender_id, s.name as sender_name,
+                m.receiver_id, r.name as receiver_name,
+                m.subject, m.body, m.is_read, m.is_starred,
+                m.created_at, m.read_at, m.reply_to,
+                mt.depth + 1
+            FROM messages m
+            JOIN users s ON m.sender_id = s.id
+            JOIN users r ON m.receiver_id = r.id
+            JOIN message_thread mt ON m.reply_to = mt.id
+        )
+        SELECT * FROM message_thread
+        ORDER BY created_at ASC
+    """), {"root_id": root_id})
+    
+    thread = []
+    for row in result:
+        thread.append({
+            "id": row[0],
+            "sender_id": row[1],
+            "sender_name": row[2],
+            "receiver_id": row[3],
+            "receiver_name": row[4],
+            "subject": row[5],
+            "body": row[6],
+            "is_read": row[7],
+            "is_starred": row[8],
+            "created_at": row[9].isoformat(),
+            "read_at": row[10].isoformat() if row[10] else None,
+            "reply_to": row[11],
+            "depth": row[12],
+            "is_current": row[0] == message_id
+        })
+    
+    return {
+        "thread": thread,
+        "total_count": len(thread),
+        "root_id": root_id,
+        "current_id": message_id
+    }
+
 @app.delete("/messages/{message_id}", tags=["쪽지함"])
 async def delete_message(
     message_id: int,
