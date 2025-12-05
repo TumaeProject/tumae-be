@@ -2069,6 +2069,9 @@ async def send_message(
         raise HTTPException(status_code=404, detail="수신자를 찾을 수 없습니다.")
     
     try:
+        # reply_to가 0이면 None으로 변환 (Foreign Key 제약 회피)
+        reply_to_value = message.reply_to if message.reply_to and message.reply_to > 0 else None
+        
         result = db.execute(text("""
             INSERT INTO messages (sender_id, receiver_id, subject, body, reply_to)
             VALUES (:sender_id, :receiver_id, :subject, :body, :reply_to)
@@ -2078,7 +2081,7 @@ async def send_message(
             "receiver_id": message.receiver_id,
             "subject": message.subject,
             "body": message.body,
-            "reply_to": message.reply_to
+            "reply_to": reply_to_value
         })
         db.commit()
         
