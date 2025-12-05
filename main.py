@@ -320,6 +320,19 @@ class CreateAnswerRequest(BaseModel):
 class AcceptAnswerRequest(BaseModel):
     user_id: int   # 게시글 작성자여야 함
 
+#----이력서 ------
+class ResumeBlockCreateRequest(BaseModel):
+    block_type: str
+    title: Optional[str] = None
+    period: Optional[str] = None
+    role: Optional[str] = None
+    description: Optional[str] = None
+    tech_stack: Optional[str] = None
+    issuer: Optional[str] = None
+    acquired_at: Optional[str] = None
+    file_url: Optional[str] = None
+    link_url: Optional[str] = None
+
 # ==========================================================
 # 🚀 공통 회원가입 (User 생성)
 # ==========================================================
@@ -2225,3 +2238,74 @@ def list_posts(
 
     except Exception as e:
         raise HTTPException(500, f"INTERNAL_SERVER_ERROR: {str(e)}")
+# ==========================================================
+# 📝 이력서 블록 추가 API
+# ==========================================================
+
+VALID_BLOCK_TYPES = ["career", "project", "certificate", "portfolio"]
+
+@app.post("/resume/{tutor_id}", status_code=201)
+def create_resume_block(
+    tutor_id: int = Path(..., description="이력서를 추가할 튜터 ID"),
+    req: ResumeBlockCreateRequest = Depends(),
+    db: Session = Depends(get_db)
+):
+    """튜터 이력서 블록 추가 (경력/프로젝트/자격증/포트폴리오)"""
+
+    try:
+        # 🔐 1. tutor_id가 존재하는 사용자인지 확인
+        user = db.execute(
+            text("SELECT id, role FROM users WHERE id = :uid"),
+            {"uid": tutor_id}
+        ).fetchone()
+
+        if not user:
+            raise HTTPException(404, "TUTOR_NOT_FOUND")
+
+        # 🎯 튜터만 등록 가능
+        if user.role != "tutor":
+            raise HTTPException(403, "FORBIDDEN_ROLE")
+
+        # 🎯 block_type 검증
+        if req.block_type not in VALID_BLOCK_TYPES:
+            raise HTTPException(400, "INVALID_BLOCK_TYPE")
+
+        # 🧩 2. 이력서 블록 저장
+        result = db.execute(text("""
+            INSERT INTO resume_blocks (
+                tutor_id, block_type, title, period, role, description, 
+                tech_stack, issuer, acquired_at, file_url, link_url, created_at
+            )
+            VALUES (
+                :tutor_id, :block_type, :title, :period, :role, :description,
+                :tech_stack, :issuer, :acquired_at, :file_url, :link_url, NOW()
+            )
+            RETURNING id
+        """), {
+            "tutor_id": tutor_id,
+            "block_type": req.block_type,
+            "title": req.title,
+            "period": req.period,
+            "role": req.role,
+            "description": req.description,
+            "tech_stack": req.tech_stack,
+            "issuer": req.issuer,
+            "acquired_at": req.acquired_at,
+            "file_url": req.file_url,
+            "link_url": req.link_url
+        })
+
+        new_block = result.fetchone()
+        db.commit()
+
+        return {
+            "message": "SUCCESS",
+            "block_id": new_block.id
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"이력서 블록 추가 중 오류: {str(e)}")
