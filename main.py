@@ -2479,3 +2479,57 @@ def update_resume_block(
     except Exception as e:
         db.rollback()
         raise HTTPException(500, f"INTERNAL_SERVER_ERROR: {str(e)}")
+
+# ==========================================================
+# 🗑️ 이력서 블록 삭제 API
+# ==========================================================
+
+@app.delete("/resume/block/{block_id}", status_code=200)
+def delete_resume_block(
+    block_id: int = Path(..., description="삭제할 블록 ID"),
+    current_user_id: int = Query(..., description="현재 로그인한 사용자 ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    이력서 블록 삭제 (튜터 본인만 가능)
+    """
+
+    try:
+        # 1️⃣ 블록 존재 여부 확인
+        block = db.execute(text("""
+            SELECT id, tutor_id 
+            FROM resume_blocks 
+            WHERE id = :block_id
+        """), {"block_id": block_id}).fetchone()
+
+        if not block:
+            raise HTTPException(404, "RESUME_BLOCK_NOT_FOUND")
+
+        tutor_id = block.tutor_id
+
+        # 2️⃣ 삭제 권한 확인 — 본인만 삭제 가능
+        if tutor_id != current_user_id:
+            raise HTTPException(403, "NO_PERMISSION")
+
+        # 3️⃣ 블록 삭제
+        db.execute(text("""
+            DELETE FROM resume_blocks 
+            WHERE id = :block_id
+        """), {"block_id": block_id})
+
+        db.commit()
+
+        return {
+            "message": "SUCCESS",
+            "status_code": 200,
+            "data": {
+                "deleted_block_id": block_id
+            }
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"INTERNAL_SERVER_ERROR: {str(e)}")
