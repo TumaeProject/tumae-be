@@ -454,6 +454,18 @@ class CreateAnswerRequest(BaseModel):
 class AcceptAnswerRequest(BaseModel):
     user_id: int
 
+class ResumeBlockCreateRequest(BaseModel):
+    block_type: str
+    title: Optional[str] = None
+    period: Optional[str] = None
+    role: Optional[str] = None
+    description: Optional[str] = None
+    tech_stack: Optional[str] = None
+    issuer: Optional[str] = None
+    acquired_at: Optional[str] = None
+    file_url: Optional[str] = None
+    link_url: Optional[str] = None
+
 # ==========================================================
 # 🚀 회원가입
 # ==========================================================
@@ -2355,6 +2367,247 @@ async def get_unread_count(
     
     return {"unread_count": result.scalar()}
 
+# ==========================================================
+# 📝 이력서 블록 추가 API
+# ==========================================================
+
+VALID_BLOCK_TYPES = ["career", "project", "certificate", "portfolio"]
+
+@app.post("/resume/{tutor_id}", status_code=201)
+def create_resume_block(
+    tutor_id: int = Path(..., description="이력서를 추가할 튜터 ID"),
+    req: ResumeBlockCreateRequest = Depends(),
+    db: Session = Depends(get_db)
+):
+    """튜터 이력서 블록 추가 (경력/프로젝트/자격증/포트폴리오)"""
+
+    try:
+        # 🔐 1. tutor_id가 존재하는 사용자인지 확인
+        user = db.execute(
+            text("SELECT id, role FROM users WHERE id = :uid"),
+            {"uid": tutor_id}
+        ).fetchone()
+
+        if not user:
+            raise HTTPException(404, "TUTOR_NOT_FOUND")
+
+        # 🎯 튜터만 등록 가능
+        if user.role != "tutor":
+            raise HTTPException(403, "FORBIDDEN_ROLE")
+
+        # 🎯 block_type 검증
+        if req.block_type not in VALID_BLOCK_TYPES:
+            raise HTTPException(400, "INVALID_BLOCK_TYPE")
+
+        # 🧩 2. 이력서 블록 저장
+        result = db.execute(text("""
+            INSERT INTO resume_blocks (
+                tutor_id, block_type, title, period, role, description, 
+                tech_stack, issuer, acquired_at, file_url, link_url, created_at
+            )
+            VALUES (
+                :tutor_id, :block_type, :title, :period, :role, :description,
+                :tech_stack, :issuer, :acquired_at, :file_url, :link_url, NOW()
+            )
+            RETURNING id
+        """), {
+            "tutor_id": tutor_id,
+            "block_type": req.block_type,
+            "title": req.title,
+            "period": req.period,
+            "role": req.role,
+            "description": req.description,
+            "tech_stack": req.tech_stack,
+            "issuer": req.issuer,
+            "acquired_at": req.acquired_at,
+            "file_url": req.file_url,
+            "link_url": req.link_url
+        })
+
+        new_block = result.fetchone()
+        db.commit()
+
+        return {
+            "message": "SUCCESS",
+            "block_id": new_block.id
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"이력서 블록 추가 중 오류: {str(e)}")
+
+# ==========================================================
+# 📝 이력서 블록 조회 API
+# ==========================================================
+@app.get("/resume/{tutor_id}", status_code=200)
+def get_resume_blocks(
+    tutor_id: int = Path(..., description="조회할 튜터 ID"),
+    db: Session = Depends(get_db)
+):
+    """튜터의 모든 이력서 블록 조회 (경력/프로젝트/자격증/포트폴리오)"""
+
+    try:
+        # 1️⃣ tutor_id 검증
+        tutor = db.execute(
+            text("SELECT id, role FROM users WHERE id = :uid"),
+            {"uid": tutor_id}
+        ).fetchone()
+
+        if not tutor:
+            raise HTTPException(404, "TUTOR_NOT_FOUND")
+
+        if tutor.role != "tutor":
+            raise HTTPException(403, "FORBIDDEN_ROLE")
+
+        # 2️⃣ 이력서 블록 전체 조회
+        rows = db.execute(text("""
+            SELECT 
+                id, block_type, title, period, role, description, 
+                tech_stack, issuer, acquired_at, file_url, link_url, created_at
+            FROM resume_blocks
+            WHERE tutor_id = :tutor_id
+            ORDER BY created_at DESC
+        """), {"tutor_id": tutor_id}).fetchall()
+
+        # 3️⃣ block_type 별 분류
+        result = {
+            "career": [],
+            "project": [],
+            "certificate": [],
+            "portfolio": []
+        }
+
+        for row in rows:
+            block = {
+                "id": row.id,
+                "title": row.title,
+                "period": row.period,
+                "role": row.role,
+                "description": row.description,
+                "tech_stack": row.tech_stack,
+                "issuer": row.issuer,
+                "acquired_at": row.acquired_at,
+                "file_url": row.file_url,
+                "link_url": row.link_url,
+                "created_at": str(row.created_at)
+            }
+            result[row.block_type].append(block)
+
+        return {
+            "message": "SUCCESS",
+            "data": result
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"이력서 조회 중 오류 발생: {str(e)}")
+
+# ==========================================================
+# 📝 이력서 블록 수정 API
+# ==========================================================
+
+class ResumeBlockUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    period: Optional[str] = None
+    role: Optional[str] = None
+    description: Optional[str] = None
+    tech_stack: Optional[str] = None
+    issuer: Optional[str] = None
+    acquired_at: Optional[str] = None
+    file_url: Optional[str] = None
+    link_url: Optional[str] = None
+
+
+@app.patch("/resume/block/{block_id}", status_code=200)
+def update_resume_block(
+    block_id: int,
+    req: ResumeBlockUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user_id: int = Query(..., description="현재 로그인한 사용자 ID")
+):
+    """
+    이력서 블록 수정 (튜터 본인만 수정 가능)
+    """
+
+    try:
+        # 1) 블록 존재 여부 확인 + tutor_id 가져오기
+        block = db.execute(text("""
+            SELECT id, tutor_id
+            FROM resume_blocks
+            WHERE id = :bid
+        """), {"bid": block_id}).fetchone()
+
+        if not block:
+            raise HTTPException(404, "BLOCK_NOT_FOUND")
+
+        tutor_id = block.tutor_id
+
+        # 2) 현재 로그인한 사용자가 해당 블록의 주인인지 확인
+        if tutor_id != current_user_id:
+            raise HTTPException(403, "NO_PERMISSION")
+
+        # 3) 업데이트할 필드만 동적으로 생성
+        update_fields = []
+        params = {"block_id": block_id}
+
+        if req.title is not None:
+            update_fields.append("title = :title")
+            params["title"] = req.title
+
+        if req.period is not None:
+            update_fields.append("period = :period")
+            params["period"] = req.period
+
+        if req.role is not None:
+            update_fields.append("role = :role")
+            params["role"] = req.role
+
+        if req.description is not None:
+            update_fields.append("description = :description")
+            params["description"] = req.description
+
+        if req.tech_stack is not None:
+            update_fields.append("tech_stack = :tech_stack")
+            params["tech_stack"] = req.tech_stack
+
+        if req.issuer is not None:
+            update_fields.append("issuer = :issuer")
+            params["issuer"] = req.issuer
+
+        if req.acquired_at is not None:
+            update_fields.append("acquired_at = :acquired_at")
+            params["acquired_at"] = req.acquired_at
+
+        if req.file_url is not None:
+            update_fields.append("file_url = :file_url")
+            params["file_url"] = req.file_url
+
+        if req.link_url is not None:
+            update_fields.append("link_url = :link_url")
+            params["link_url"] = req.link_url
+
+        # 업데이트할 필드가 없다면 실행하지 않음
+        if update_fields:
+            db.execute(text(f"""
+                UPDATE resume_blocks
+                SET {', '.join(update_fields)}
+                WHERE id = :block_id
+            """), params)
+
+        db.commit()
+
+        return {"message": "UPDATED"}
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"INTERNAL_SERVER_ERROR: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
