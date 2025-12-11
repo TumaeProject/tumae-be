@@ -12,7 +12,7 @@ import os
 import json
 
 # ==========================================================
-# 🔐 환경변수 로드 (.env)
+# 📁 환경변수 로드 (.env)
 # ==========================================================
 load_dotenv()
 
@@ -278,6 +278,37 @@ class ResumeBlockUpdateRequest(BaseModel):
     file_url: Optional[str] = None
     link_url: Optional[str] = None
 
+# --- 쪽지함 관련 ---
+class MessageCreate(BaseModel):
+    receiver_id: int
+    subject: str
+    body: str
+    reply_to: Optional[int] = None
+
+class MessageListItem(BaseModel):
+    id: int
+    sender_id: int
+    sender_name: str
+    subject: str
+    preview: str
+    is_read: bool
+    is_starred: bool
+    created_at: str
+
+class MessageResponse(BaseModel):
+    id: int
+    sender_id: int
+    sender_name: str
+    receiver_id: int
+    receiver_name: str
+    subject: str
+    body: str
+    is_read: bool
+    is_starred: bool
+    created_at: str
+    read_at: Optional[str] = None
+    reply_to: Optional[int] = None
+
 # ==========================================================
 # 🚀 회원가입
 # ==========================================================
@@ -292,6 +323,9 @@ def signup(user: SignupRequest, db: Session = Depends(get_db)):
 
         if user.role not in ["student", "tutor"]:
             raise HTTPException(400, "INVALID_ROLE")
+
+        if user.gender not in ["male", "female", "none"]:
+            raise HTTPException(400, "INVALID_GENDER")
 
         password_hash = hash_password(user.password)
 
@@ -321,12 +355,14 @@ def signup(user: SignupRequest, db: Session = Depends(get_db)):
                 "signup_status": new_user[3]
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"회원가입 중 오류가 발생했습니다: {str(e)}")
 
 # ==========================================================
-# 🔐 로그인
+# 🔑 로그인
 # ==========================================================
 @app.post("/auth/login", status_code=status.HTTP_200_OK)
 def login(data: LoginRequest, db: Session = Depends(get_db)):
@@ -360,8 +396,10 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
                 "redirect_url": redirect_url
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"로그인 중 오류가 발생했습니다: {str(e)}")
 
 # ==========================================================
 # 🔓 로그아웃
@@ -374,13 +412,20 @@ def logout(data: LogoutRequest, db: Session = Depends(get_db)):
         if not user:
             raise HTTPException(404, "USER_NOT_FOUND")
         
+        logged_out_at = datetime.utcnow()
+        
         return {
             "message": "로그아웃되었습니다",
             "status_code": 200,
-            "data": {"user_id": user.id}
+            "data": {
+                "user_id": user.id,
+                "logged_out_at": logged_out_at.isoformat()
+            }
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"로그아웃 처리 중 오류가 발생했습니다: {str(e)}")
 
 # ==========================================================
 # 🗑️ 회원 탈퇴
@@ -417,9 +462,11 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
         db.commit()
 
         return {"message": "SUCCESS", "status_code": 200}
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, f"INTERNAL_SERVER_ERROR: {str(e)}")
 
 # ==========================================================
 # 🧑‍🏫 튜터 온보딩
@@ -468,10 +515,19 @@ def tutor_details(req: TutorDetailsRequest, db: Session = Depends(get_db)):
 
         db.execute(text("UPDATE users SET signup_status = 'active' WHERE id = :uid"), {"uid": req.user_id})
         db.commit()
-        return {"message": "SUCCESS"}
+        return {
+            "message": "SUCCESS",
+            "data": {
+                "user_id": req.user_id,
+                "signup_status": "active"
+            }
+        }
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, f"튜터 정보 저장 중 오류가 발생했습니다: {str(e)}")
 
 # ==========================================================
 # 👨‍🎓 학생 온보딩
@@ -515,13 +571,22 @@ def student_details(req: StudentDetailsRequest, db: Session = Depends(get_db)):
 
         db.execute(text("UPDATE users SET signup_status = 'active' WHERE id = :uid"), {"uid": req.user_id})
         db.commit()
-        return {"message": "SUCCESS"}
+        return {
+            "message": "SUCCESS",
+            "data": {
+                "user_id": req.user_id,
+                "signup_status": "active"
+            }
+        }
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, f"학생 정보 저장 중 오류가 발생했습니다: {str(e)}")
 
 # ==========================================================
-# 🔍 헬스체크
+# 🏠 헬스체크
 # ==========================================================
 @app.get("/")
 def root():
@@ -823,71 +888,102 @@ async def get_students(
 @app.post("/community/posts", status_code=201)
 def create_post(req: CreatePostRequest, db: Session = Depends(get_db)):
     try:
-        post = db.execute(text("""
+        author = db.execute(text("SELECT id FROM users WHERE id = :id"), {"id": req.author_id}).fetchone()
+        if not author: raise HTTPException(404, "USER_NOT_FOUND")
+
+        subject = db.execute(text("SELECT id FROM subjects WHERE id = :sid"), {"sid": req.subject_id}).fetchone()
+        if not subject: raise HTTPException(404, "SUBJECT_NOT_FOUND")
+
+        if req.region_id is not None:
+            region = db.execute(text("SELECT id FROM regions WHERE id = :rid"), {"rid": req.region_id}).fetchone()
+            if not region: raise HTTPException(404, "REGION_NOT_FOUND")
+
+        post_result = db.execute(text("""
             INSERT INTO posts (author_id, title, body, subject_id, region_id, created_at)
             VALUES (:author_id, :title, :body, :subject_id, :region_id, NOW())
             RETURNING id, created_at
-        """), req.dict()).fetchone()
+        """), req.dict())
+        post = post_result.fetchone()
+        post_id = post[0]
+
+        if req.tags:
+            for tag in req.tags:
+                tag_row = db.execute(text("SELECT id FROM tags WHERE name = :name"), {"name": tag}).fetchone()
+                tag_id = tag_row[0] if tag_row else db.execute(text("INSERT INTO tags (name) VALUES (:name) RETURNING id"), {"name": tag}).fetchone()[0]
+                db.execute(text("INSERT INTO post_tags (post_id, tag_id) VALUES (:post_id, :tag_id)"), {"post_id": post_id, "tag_id": tag_id})
+
         db.commit()
-        return {"message": "SUCCESS", "data": {"post_id": post[0], "created_at": str(post[1])}}
+        return {"message": "SUCCESS", "status_code": 201, "data": {"post_id": post_id, "created_at": str(post[1])}}
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, f"게시글 등록 중 오류가 발생했습니다: {str(e)}")
 
 @app.get("/community/posts/{post_id}", status_code=200)
 def get_post_detail(post_id: int, db: Session = Depends(get_db)):
-    post = db.execute(text("SELECT * FROM posts WHERE id = :id"), {"id": post_id}).fetchone()
+    post = db.execute(text("""
+        SELECT p.id, p.title, p.body, p.author_id, p.subject_id, p.region_id, p.created_at,
+        u.name AS author_name, s.name AS subject_name, r.name AS region_name
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        JOIN subjects s ON p.subject_id = s.id
+        LEFT JOIN regions r ON p.region_id = r.id
+        WHERE p.id = :pid
+    """), {"pid": post_id}).fetchone()
     if not post: raise HTTPException(404, "POST_NOT_FOUND")
     
-    answers = db.execute(text("""
-        SELECT a.*, u.name as author_name 
-        FROM answers a JOIN users u ON a.author_id = u.id 
-        WHERE a.post_id = :pid ORDER BY a.created_at
+    answers_result = db.execute(text("""
+        SELECT a.id, a.author_id, a.body, a.is_accepted, a.created_at, u.name AS author_name
+        FROM answers a JOIN users u ON a.author_id = u.id
+        WHERE a.post_id = :pid ORDER BY a.created_at ASC
     """), {"pid": post_id}).fetchall()
     
-    ans_list = [
-        {"id": a.id, "author_id": a.author_id, "author_name": a.author_name, "body": a.body, "is_accepted": a.is_accepted, "created_at": str(a.created_at)} 
-        for a in answers
-    ]
+    answers = [{"id": r[0], "author_id": r[1], "author_name": r[5], "body": r[2], "is_accepted": r[3], "created_at": str(r[4])} for r in answers_result]
     
     return {
-        "message": "SUCCESS", 
+        "message": "SUCCESS", "status_code": 200,
         "data": {
-            "id": post.id, "title": post.title, "body": post.body, 
-            "author_id": post.author_id, "author_name": "작성자",
-            "subject_id": post.subject_id, "subject_name": "과목",
-            "created_at": str(post.created_at), "answers": ans_list
+            "id": post[0], "title": post[1], "body": post[2], "author_id": post[3],
+            "author_name": post[7], "subject_id": post[4], "subject_name": post[8],
+            "region_id": post[5], "region_name": post[9], "created_at": str(post[6]), "answers": answers
         }
     }
 
 @app.post("/community/posts/{post_id}/answers", status_code=201)
 def create_answer(post_id: int, req: CreateAnswerRequest, db: Session = Depends(get_db)):
     try:
-        ans = db.execute(text("""
+        if not db.execute(text("SELECT id FROM posts WHERE id = :pid"), {"pid": post_id}).fetchone():
+            raise HTTPException(404, "POST_NOT_FOUND")
+        if not db.execute(text("SELECT id FROM users WHERE id = :aid"), {"aid": req.author_id}).fetchone():
+            raise HTTPException(404, "USER_NOT_FOUND")
+        if not req.body or req.body.strip() == "":
+            raise HTTPException(400, "INVALID_INPUT")
+
+        result = db.execute(text("""
             INSERT INTO answers (post_id, author_id, body, is_accepted, created_at)
-            VALUES (:pid, :uid, :body, false, NOW())
-            RETURNING id
-        """), {"pid": post_id, "uid": req.author_id, "body": req.body}).fetchone()
+            VALUES (:pid, :aid, :body, false, NOW()) RETURNING id, post_id, author_id, body, is_accepted, created_at
+        """), {"pid": post_id, "aid": req.author_id, "body": req.body})
         db.commit()
-        return {"message": "SUCCESS", "data": {"answer_id": ans[0]}}
+        answer = result.fetchone()
+        return {"message": "SUCCESS", "status_code": 201, "data": {"answer_id": answer.id, "post_id": answer.post_id, "author_id": answer.author_id, "body": answer.body, "is_accepted": answer.is_accepted, "created_at": str(answer.created_at)}}
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, f"댓글 등록 중 오류: {str(e)}")
 
 # ==========================================================
 # 🏆 [KEY] 답변 채택 API (accepted_count 컬럼 업데이트 로직 포함)
 # ==========================================================
 @app.patch("/community/answers/{answer_id}/accept", status_code=200)
 def accept_answer(answer_id: int, req: AcceptAnswerRequest, db: Session = Depends(get_db)):
-    """
-    답변 채택 API - accepted_count 물리 컬럼 업데이트
-    """
+    """답변 채택 API - accepted_count 물리 컬럼 업데이트"""
     try:
         # 1. 채택하려는 답변 조회
         new_answer = db.execute(text("SELECT id, post_id, author_id FROM answers WHERE id = :id"), {"id": answer_id}).fetchone()
-        if not new_answer: 
-            raise HTTPException(404, "ANSWER_NOT_FOUND")
-        
+        if not new_answer: raise HTTPException(404, "ANSWER_NOT_FOUND")
         post_id = new_answer.post_id
         
         # 2. 게시글 작성자 본인 확인
@@ -896,40 +992,26 @@ def accept_answer(answer_id: int, req: AcceptAnswerRequest, db: Session = Depend
             raise HTTPException(403, "NOT_POST_AUTHOR")
             
         # 3. 기존에 채택된 답변이 있는지 확인
-        old_answer = db.execute(text("""
-            SELECT id, author_id FROM answers 
-            WHERE post_id = :pid AND is_accepted = TRUE
-        """), {"pid": post_id}).fetchone()
+        old_answer = db.execute(text("SELECT id, author_id FROM answers WHERE post_id = :pid AND is_accepted = TRUE"), {"pid": post_id}).fetchone()
         
         # 4. 트랜잭션 시작 - 점수 조정
-        # Case A: 이미 채택된 답변이 있다면 취소하고 해당 저자 점수 차감
         if old_answer:
             if old_answer.id == answer_id:
-                return {"message": "ALREADY_ACCEPTED"} # 이미 채택된 답변 재클릭 시 무시
+                return {"message": "ALREADY_ACCEPTED"}
             
             # 기존 답변 채택 취소
             db.execute(text("UPDATE answers SET is_accepted = FALSE WHERE id = :aid"), {"aid": old_answer.id})
+            # 기존 저자의 accepted_count 감소
+            db.execute(text("UPDATE tutor_profiles SET accepted_count = GREATEST(accepted_count - 1, 0) WHERE user_id = :uid"), {"uid": old_answer.author_id})
             
-            # 기존 저자의 accepted_count 감소 (0 이하로는 안 내려가게)
-            db.execute(text("""
-                UPDATE tutor_profiles 
-                SET accepted_count = GREATEST(accepted_count - 1, 0) 
-                WHERE user_id = :uid
-            """), {"uid": old_answer.author_id})
-            
-        # Case B: 새로운 답변 채택 및 점수 증가
+        # 새로운 답변 채택 및 점수 증가
         db.execute(text("UPDATE answers SET is_accepted = TRUE WHERE id = :aid"), {"aid": answer_id})
-        
-        # 새 저자의 accepted_count 증가 (tutor_profiles가 있는 경우만)
-        db.execute(text("""
-            UPDATE tutor_profiles 
-            SET accepted_count = COALESCE(accepted_count, 0) + 1 
-            WHERE user_id = :uid
-        """), {"uid": new_answer.author_id})
+        db.execute(text("UPDATE tutor_profiles SET accepted_count = COALESCE(accepted_count, 0) + 1 WHERE user_id = :uid"), {"uid": new_answer.author_id})
         
         db.commit()
         return {"message": "SUCCESS"}
-        
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(500, str(e))
@@ -937,29 +1019,19 @@ def accept_answer(answer_id: int, req: AcceptAnswerRequest, db: Session = Depend
 # ==========================================================
 # 📬 쪽지함 API
 # ==========================================================
-class MessageCreate(BaseModel):
-    receiver_id: int
-    subject: str
-    body: str
-    reply_to: Optional[int] = None
-
-class MessageListItem(BaseModel):
-    id: int
-    sender_id: int
-    sender_name: str
-    subject: str
-    preview: str
-    is_read: bool
-    is_starred: bool
-    created_at: str
-
 @app.post("/messages/send", status_code=201, tags=["쪽지함"])
 async def send_message(msg: MessageCreate, sender_id: int = Query(...), db: Session = Depends(get_db)):
+    sender = get_user_by_id(db, sender_id)
+    if not sender: raise HTTPException(404, "발신자를 찾을 수 없습니다.")
+    receiver = get_user_by_id(db, msg.receiver_id)
+    if not receiver: raise HTTPException(404, "수신자를 찾을 수 없습니다.")
+    
     try:
+        reply_to_value = msg.reply_to if msg.reply_to and msg.reply_to > 0 else None
         res = db.execute(text("""
             INSERT INTO messages (sender_id, receiver_id, subject, body, reply_to)
             VALUES (:sid, :rid, :sub, :body, :rep) RETURNING id, created_at
-        """), {"sid": sender_id, "rid": msg.receiver_id, "sub": msg.subject, "body": msg.body, "rep": msg.reply_to or None})
+        """), {"sid": sender_id, "rid": msg.receiver_id, "sub": msg.subject, "body": msg.body, "rep": reply_to_value})
         db.commit()
         r = res.fetchone()
         return {"message": "쪽지 전송 완료", "message_id": r[0], "created_at": r[1].isoformat()}
@@ -968,31 +1040,42 @@ async def send_message(msg: MessageCreate, sender_id: int = Query(...), db: Sess
         raise HTTPException(500, str(e))
 
 @app.get("/messages/inbox", response_model=List[MessageListItem], tags=["쪽지함"])
-async def get_inbox(user_id: int = Query(...), db: Session = Depends(get_db)):
+async def get_inbox(user_id: int = Query(...), page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+    offset = (page - 1) * per_page
     res = db.execute(text("""
         SELECT m.id, m.sender_id, u.name, m.subject, SUBSTRING(m.body, 1, 50), m.is_read, m.is_starred, m.created_at
         FROM messages m JOIN users u ON m.sender_id = u.id
         WHERE m.receiver_id = :uid AND m.receiver_deleted = FALSE ORDER BY m.created_at DESC
-    """), {"uid": user_id})
+        LIMIT :per_page OFFSET :offset
+    """), {"uid": user_id, "per_page": per_page, "offset": offset})
     return [{"id": r[0], "sender_id": r[1], "sender_name": r[2], "subject": r[3], "preview": r[4], "is_read": r[5], "is_starred": r[6], "created_at": r[7].isoformat()} for r in res]
 
 @app.get("/messages/sent", response_model=List[MessageListItem], tags=["쪽지함"])
-async def get_sent(user_id: int = Query(...), db: Session = Depends(get_db)):
+async def get_sent(user_id: int = Query(...), page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+    offset = (page - 1) * per_page
     res = db.execute(text("""
         SELECT m.id, m.receiver_id, u.name, m.subject, SUBSTRING(m.body, 1, 50), m.is_read, m.is_starred, m.created_at
         FROM messages m JOIN users u ON m.receiver_id = u.id
         WHERE m.sender_id = :uid AND m.sender_deleted = FALSE ORDER BY m.created_at DESC
-    """), {"uid": user_id})
+        LIMIT :per_page OFFSET :offset
+    """), {"uid": user_id, "per_page": per_page, "offset": offset})
     return [{"id": r[0], "sender_id": r[1], "sender_name": r[2], "subject": r[3], "preview": r[4], "is_read": r[5], "is_starred": r[6], "created_at": r[7].isoformat()} for r in res]
 
-@app.get("/messages/{message_id}", tags=["쪽지함"])
+@app.get("/messages/{message_id}", response_model=MessageResponse, tags=["쪽지함"])
 async def get_msg_detail(message_id: int, user_id: int = Query(...), db: Session = Depends(get_db)):
-    row = db.execute(text("SELECT * FROM messages WHERE id = :id"), {"id": message_id}).fetchone()
-    if not row: raise HTTPException(404, "쪽지 없음")
-    if row.receiver_id == user_id and not row.is_read:
-        db.execute(text("UPDATE messages SET is_read = TRUE, read_at = NOW() WHERE id = :id"), {"id": message_id})
+    result = db.execute(text("""
+        SELECT m.id, m.sender_id, s.name, m.receiver_id, r.name, m.subject, m.body, m.is_read, m.is_starred, m.created_at, m.read_at, m.reply_to
+        FROM messages m JOIN users s ON m.sender_id = s.id JOIN users r ON m.receiver_id = r.id
+        WHERE m.id = :mid AND (m.sender_id = :uid OR m.receiver_id = :uid)
+    """), {"mid": message_id, "uid": user_id})
+    row = result.fetchone()
+    if not row: raise HTTPException(404, "쪽지를 찾을 수 없습니다.")
+    
+    if row[3] == user_id and not row[7]:
+        db.execute(text("UPDATE messages SET is_read = TRUE, read_at = NOW() WHERE id = :mid"), {"mid": message_id})
         db.commit()
-    return {"id": row.id, "subject": row.subject, "body": row.body, "sender_id": row.sender_id, "created_at": str(row.created_at)}
+    
+    return {"id": row[0], "sender_id": row[1], "sender_name": row[2], "receiver_id": row[3], "receiver_name": row[4], "subject": row[5], "body": row[6], "is_read": row[7], "is_starred": row[8], "created_at": row[9].isoformat(), "read_at": row[10].isoformat() if row[10] else None, "reply_to": row[11]}
 
 @app.get("/messages/{message_id}/thread", tags=["쪽지함"])
 async def get_message_thread(message_id: int, user_id: int = Query(...), db: Session = Depends(get_db)):
@@ -1009,70 +1092,123 @@ async def get_message_thread(message_id: int, user_id: int = Query(...), db: Ses
         
     thread = db.execute(text("""
         WITH RECURSIVE mt AS (
-            SELECT id, sender_id, receiver_id, subject, body, reply_to, created_at, 0 as depth FROM messages WHERE id = :root
+            SELECT id, sender_id, receiver_id, subject, body, is_read, is_starred, created_at, read_at, reply_to, 0 as depth
+            FROM messages WHERE id = :root
             UNION ALL
-            SELECT m.id, m.sender_id, m.receiver_id, m.subject, m.body, m.reply_to, m.created_at, mt.depth + 1
+            SELECT m.id, m.sender_id, m.receiver_id, m.subject, m.body, m.is_read, m.is_starred, m.created_at, m.read_at, m.reply_to, mt.depth + 1
             FROM messages m JOIN mt ON m.reply_to = mt.id
         ) SELECT * FROM mt ORDER BY created_at
     """), {"root": root_id}).fetchall()
     
-    return {"thread": [{"id": r.id, "sender_id": r.sender_id, "subject": r.subject, "body": r.body, "depth": r.depth} for r in thread]}
+    return {"thread": [{"id": r.id, "sender_id": r.sender_id, "subject": r.subject, "body": r.body, "depth": r.depth, "is_current": r.id == message_id, "created_at": r.created_at.isoformat()} for r in thread], "total_count": len(thread), "root_id": root_id, "current_id": message_id}
 
 @app.delete("/messages/{message_id}", tags=["쪽지함"])
 async def delete_msg(message_id: int, user_id: int = Query(...), db: Session = Depends(get_db)):
-    row = db.execute(text("SELECT sender_id, receiver_id FROM messages WHERE id = :id"), {"id": message_id}).fetchone()
+    row = db.execute(text("SELECT sender_id, receiver_id, sender_deleted, receiver_deleted FROM messages WHERE id = :id"), {"id": message_id}).fetchone()
     if not row: raise HTTPException(404)
     
-    if user_id == row.sender_id:
-        db.execute(text("UPDATE messages SET sender_deleted = TRUE WHERE id = :id"), {"id": message_id})
-    elif user_id == row.receiver_id:
-        db.execute(text("UPDATE messages SET receiver_deleted = TRUE WHERE id = :id"), {"id": message_id})
+    sender_id, receiver_id, sender_deleted, receiver_deleted = row
+    if user_id not in [sender_id, receiver_id]: raise HTTPException(403)
+    
+    if user_id == sender_id:
+        if receiver_deleted: db.execute(text("DELETE FROM messages WHERE id = :id"), {"id": message_id})
+        else: db.execute(text("UPDATE messages SET sender_deleted = TRUE WHERE id = :id"), {"id": message_id})
     else:
-        raise HTTPException(403)
+        if sender_deleted: db.execute(text("DELETE FROM messages WHERE id = :id"), {"id": message_id})
+        else: db.execute(text("UPDATE messages SET receiver_deleted = TRUE WHERE id = :id"), {"id": message_id})
+    
     db.commit()
     return {"message": "삭제됨"}
+
+@app.patch("/messages/{message_id}/star", tags=["쪽지함"])
+async def toggle_star(message_id: int, user_id: int = Query(...), db: Session = Depends(get_db)):
+    result = db.execute(text("SELECT sender_id, receiver_id, is_starred FROM messages WHERE id = :id"), {"id": message_id})
+    row = result.fetchone()
+    if not row or user_id not in [row[0], row[1]]: raise HTTPException(404, "쪽지를 찾을 수 없습니다.")
+    
+    db.execute(text("UPDATE messages SET is_starred = NOT is_starred WHERE id = :id"), {"id": message_id})
+    db.commit()
+    return {"message": "즐겨찾기가 변경되었습니다.", "is_starred": not row[2]}
+
+@app.get("/messages/unread/count", tags=["쪽지함"])
+async def get_unread_count(user_id: int = Query(...), db: Session = Depends(get_db)):
+    result = db.execute(text("SELECT COUNT(*) FROM messages WHERE receiver_id = :uid AND is_read = FALSE AND receiver_deleted = FALSE"), {"uid": user_id})
+    return {"unread_count": result.scalar()}
 
 # ==========================================================
 # 📝 이력서 블록 API
 # ==========================================================
+VALID_BLOCK_TYPES = ["career", "project", "certificate", "portfolio"]
+
 @app.post("/resume/{tutor_id}", status_code=201)
 def create_resume_block(tutor_id: int, req: ResumeBlockCreateRequest, db: Session = Depends(get_db)):
     try:
-        db.execute(text("""
+        user = db.execute(text("SELECT id, role FROM users WHERE id = :uid"), {"uid": tutor_id}).fetchone()
+        if not user: raise HTTPException(404, "TUTOR_NOT_FOUND")
+        if user.role != "tutor": raise HTTPException(403, "FORBIDDEN_ROLE")
+        if req.block_type not in VALID_BLOCK_TYPES: raise HTTPException(400, "INVALID_BLOCK_TYPE")
+
+        result = db.execute(text("""
             INSERT INTO resume_blocks (tutor_id, block_type, title, period, role, description, tech_stack, issuer, acquired_at, file_url, link_url, created_at)
             VALUES (:tid, :bt, :tit, :per, :role, :desc, :tech, :iss, :acq, :file, :link, NOW())
+            RETURNING id
         """), {"tid": tutor_id, "bt": req.block_type, "tit": req.title, "per": req.period, "role": req.role, "desc": req.description, "tech": req.tech_stack, "iss": req.issuer, "acq": req.acquired_at, "file": req.file_url, "link": req.link_url})
+        new_block = result.fetchone()
         db.commit()
-        return {"message": "SUCCESS"}
+        return {"message": "SUCCESS", "block_id": new_block.id}
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, f"이력서 블록 추가 중 오류: {str(e)}")
 
 @app.get("/resume/{tutor_id}", status_code=200)
 def get_resume_blocks(tutor_id: int, db: Session = Depends(get_db)):
-    rows = db.execute(text("SELECT * FROM resume_blocks WHERE tutor_id = :tid ORDER BY created_at DESC"), {"tid": tutor_id}).fetchall()
-    res = {"career": [], "project": [], "certificate": [], "portfolio": []}
-    for r in rows:
-        res[r.block_type].append({"id": r.id, "title": r.title, "description": r.description, "period": r.period})
-    return {"message": "SUCCESS", "data": res}
+    try:
+        tutor = db.execute(text("SELECT id, role FROM users WHERE id = :uid"), {"uid": tutor_id}).fetchone()
+        if not tutor: raise HTTPException(404, "TUTOR_NOT_FOUND")
+        if tutor.role != "tutor": raise HTTPException(403, "FORBIDDEN_ROLE")
+
+        rows = db.execute(text("""
+            SELECT id, block_type, title, period, role, description, tech_stack, issuer, acquired_at, file_url, link_url, created_at
+            FROM resume_blocks WHERE tutor_id = :tid ORDER BY created_at DESC
+        """), {"tid": tutor_id}).fetchall()
+
+        result = {"career": [], "project": [], "certificate": [], "portfolio": []}
+        for r in rows:
+            block = {"id": r.id, "title": r.title, "period": r.period, "role": r.role, "description": r.description, "tech_stack": r.tech_stack, "issuer": r.issuer, "acquired_at": r.acquired_at, "file_url": r.file_url, "link_url": r.link_url, "created_at": str(r.created_at)}
+            result[r.block_type].append(block)
+        return {"message": "SUCCESS", "data": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"이력서 조회 중 오류 발생: {str(e)}")
 
 @app.patch("/resume/block/{block_id}", status_code=200)
-def update_resume_block(block_id: int, req: ResumeBlockUpdateRequest, db: Session = Depends(get_db)):
-    # 동적 쿼리 생성으로 필드 업데이트
-    updates = []
-    params = {"id": block_id}
-    
-    fields = req.dict(exclude_unset=True)
-    if not fields: return {"message": "NO_CHANGES"}
+def update_resume_block(block_id: int, req: ResumeBlockUpdateRequest, db: Session = Depends(get_db), current_user_id: int = Query(..., description="현재 로그인한 사용자 ID")):
+    try:
+        block = db.execute(text("SELECT id, tutor_id FROM resume_blocks WHERE id = :bid"), {"bid": block_id}).fetchone()
+        if not block: raise HTTPException(404, "BLOCK_NOT_FOUND")
+        if block.tutor_id != current_user_id: raise HTTPException(403, "NO_PERMISSION")
 
-    for key, value in fields.items():
-        updates.append(f"{key} = :{key}")
-        params[key] = value
+        update_fields = []
+        params = {"block_id": block_id}
+        fields = req.dict(exclude_unset=True)
+        if not fields: return {"message": "NO_CHANGES"}
 
-    query = f"UPDATE resume_blocks SET {', '.join(updates)} WHERE id = :id"
-    db.execute(text(query), params)
-    db.commit()
-    return {"message": "UPDATED"}
+        for key, value in fields.items():
+            update_fields.append(f"{key} = :{key}")
+            params[key] = value
+
+        if update_fields:
+            db.execute(text(f"UPDATE resume_blocks SET {', '.join(update_fields)} WHERE id = :block_id"), params)
+        db.commit()
+        return {"message": "UPDATED"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"INTERNAL_SERVER_ERROR: {str(e)}")
 
 # ==========================================================
 # 💾 서버 시작 이벤트 (테이블/컬럼 자동 생성)
@@ -1082,6 +1218,21 @@ async def startup_event():
     if engine:
         try:
             with engine.connect() as conn:
+                # users 테이블 존재 확인
+                result = conn.execute(text("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' AND table_name = 'users'
+                    );
+                """))
+                users_exists = result.scalar()
+                
+                if not users_exists:
+                    print("⚠️  경고: users 테이블이 존재하지 않습니다!")
+                    print("💡  회원가입 API를 먼저 사용하거나 데이터베이스 스키마를 생성하세요.")
+                else:
+                    print("✅ users 테이블 확인됨")
+                
                 # 1. 쪽지함 테이블 생성
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS messages (
@@ -1098,10 +1249,13 @@ async def startup_event():
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         read_at TIMESTAMP
                     );
+                    
+                    CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_id, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(receiver_id, is_read);
                 """))
                 
                 # 2. accepted_count 컬럼 추가 (Migration)
-                # tutor_profiles 테이블이 있는지 확인하고 컬럼 추가
                 result = conn.execute(text("""
                     SELECT EXISTS (
                         SELECT FROM information_schema.tables 
