@@ -2425,10 +2425,9 @@ def update_resume_block(
     block_id: int,
     req: ResumeBlockUpdateRequest,
     db: Session = Depends(get_db),
-    current_user_id: int = Query(..., description="현재 로그인한 사용자 ID")
 ):
     """
-    이력서 블록 수정 (튜터 본인만 수정 가능)
+    이력서 블록 수정
     """
 
     try:
@@ -2443,10 +2442,6 @@ def update_resume_block(
             raise HTTPException(404, "BLOCK_NOT_FOUND")
 
         tutor_id = block.tutor_id
-
-        # 2) 현재 로그인한 사용자가 해당 블록의 주인인지 확인
-        if tutor_id != current_user_id:
-            raise HTTPException(403, "NO_PERMISSION")
 
         # 3) 업데이트할 필드만 동적으로 생성
         update_fields = []
