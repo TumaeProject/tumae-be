@@ -792,6 +792,84 @@ async def get_tutor_detail(tutor_id: int = Path(...), db: Session = Depends(get_
 # ==========================================================
 # ⚡ 학생 관련 API
 # ==========================================================
+# ==========================================================
+# 👨‍🎓 학생 상세 조회
+# ==========================================================
+@app.get("/api/students/{student_id}", response_model=StudentDetailResponse)
+async def get_student_detail(student_id: int = Path(...), db: Session = Depends(get_db)):
+    """학생 상세 정보"""
+    
+    student_result = db.execute(text("""
+        SELECT 
+            u.id, u.name, u.email, u.created_at, u.signup_status,
+            sp.preferred_price_min, sp.preferred_price_max
+        FROM users u
+        LEFT JOIN student_profiles sp ON u.id = sp.user_id
+        WHERE u.id = :student_id AND u.role = 'student'
+    """), {'student_id': student_id})
+    
+    student = student_result.fetchone()
+    if not student:
+        raise HTTPException(status_code=404, detail="학생을 찾을 수 없습니다.")
+    
+    subjects_result = db.execute(text("""
+        SELECT s.name FROM student_subjects ss
+        JOIN subjects s ON ss.subject_id = s.id
+        WHERE ss.user_id = :student_id
+    """), {'student_id': student_id})
+    subjects = [row[0] for row in subjects_result.fetchall()]
+    
+    regions_result = db.execute(text("""
+        SELECT CASE 
+            WHEN r.level = '시도' THEN r.name
+            WHEN r.level = '시군구' THEN p.name || ' ' || r.name
+            ELSE r.name
+        END as full_name
+        FROM student_regions sr
+        JOIN regions r ON sr.region_id = r.id
+        LEFT JOIN regions p ON r.parent_id = p.id
+        WHERE sr.user_id = :student_id
+        ORDER BY r.level, r.name
+    """), {'student_id': student_id})
+    regions = [row[0] for row in regions_result.fetchall()]
+    
+    skill_result = db.execute(text("""
+        SELECT sl.name FROM student_skill_levels ssl
+        JOIN skill_levels sl ON ssl.skill_level_id = sl.id
+        WHERE ssl.user_id = :student_id
+        LIMIT 1
+    """), {'student_id': student_id})
+    skill_level = skill_result.scalar()
+    
+    goals_result = db.execute(text("""
+        SELECT g.name FROM student_goals sg
+        JOIN goals g ON sg.goal_id = g.id
+        WHERE sg.user_id = :student_id
+    """), {'student_id': student_id})
+    goals = [row[0] for row in goals_result.fetchall()]
+    
+    lesson_types_result = db.execute(text("""
+        SELECT lt.name FROM student_lesson_types slt
+        JOIN lesson_types lt ON slt.lesson_type_id = lt.id
+        WHERE slt.user_id = :student_id
+    """), {'student_id': student_id})
+    lesson_types = [row[0] for row in lesson_types_result.fetchall()]
+    
+    return StudentDetailResponse(
+        id=student[0],
+        name=student[1],
+        email=student[2],
+        created_at=str(student[3]),
+        signup_status=student[4],
+        preferred_price_min=student[5],
+        preferred_price_max=student[6],
+        subjects=subjects,
+        regions=regions,
+        skill_level=skill_level,
+        goals=goals,
+        lesson_types=lesson_types
+    )
+
 @app.get("/api/students/{student_id}", response_model=StudentDetailResponse)
 async def get_student_detail(student_id: int = Path(...), db: Session = Depends(get_db)):
     student = db.execute(text("""
