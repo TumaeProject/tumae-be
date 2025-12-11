@@ -1227,92 +1227,225 @@ async def get_students(
 # ==========================================================
 @app.post("/community/posts", status_code=201)
 def create_post(req: CreatePostRequest, db: Session = Depends(get_db)):
-    try:
-        author = db.execute(text("SELECT id FROM users WHERE id = :id"), {"id": req.author_id}).fetchone()
-        if not author: raise HTTPException(404, "USER_NOT_FOUND")
+    """커뮤니티 게시글 등록"""
 
-        subject = db.execute(text("SELECT id FROM subjects WHERE id = :sid"), {"sid": req.subject_id}).fetchone()
-        if not subject: raise HTTPException(404, "SUBJECT_NOT_FOUND")
+    try:
+        author = db.execute(
+            text("SELECT id FROM users WHERE id = :id"),
+            {"id": req.author_id}
+        ).fetchone()
+
+        if not author:
+            raise HTTPException(404, "USER_NOT_FOUND")
+
+        subject = db.execute(
+            text("SELECT id FROM subjects WHERE id = :sid"),
+            {"sid": req.subject_id}
+        ).fetchone()
+
+        if not subject:
+            raise HTTPException(404, "SUBJECT_NOT_FOUND")
 
         if req.region_id is not None:
-            region = db.execute(text("SELECT id FROM regions WHERE id = :rid"), {"rid": req.region_id}).fetchone()
-            if not region: raise HTTPException(404, "REGION_NOT_FOUND")
+            region = db.execute(
+                text("SELECT id FROM regions WHERE id = :rid"),
+                {"rid": req.region_id}
+            ).fetchone()
 
-        post_result = db.execute(text("""
-            INSERT INTO posts (author_id, title, body, subject_id, region_id, created_at)
-            VALUES (:author_id, :title, :body, :subject_id, :region_id, NOW())
-            RETURNING id, created_at
-        """), req.dict())
+            if not region:
+                raise HTTPException(404, "REGION_NOT_FOUND")
+
+        post_result = db.execute(
+            text("""
+                INSERT INTO posts (author_id, title, body, subject_id, region_id, created_at)
+                VALUES (:author_id, :title, :body, :subject_id, :region_id, NOW())
+                RETURNING id, created_at
+            """),
+            {
+                "author_id": req.author_id,
+                "title": req.title,
+                "body": req.body,
+                "subject_id": req.subject_id,
+                "region_id": req.region_id
+            }
+        )
         post = post_result.fetchone()
         post_id = post[0]
 
         if req.tags:
             for tag in req.tags:
-                tag_row = db.execute(text("SELECT id FROM tags WHERE name = :name"), {"name": tag}).fetchone()
-                tag_id = tag_row[0] if tag_row else db.execute(text("INSERT INTO tags (name) VALUES (:name) RETURNING id"), {"name": tag}).fetchone()[0]
-                db.execute(text("INSERT INTO post_tags (post_id, tag_id) VALUES (:post_id, :tag_id)"), {"post_id": post_id, "tag_id": tag_id})
+                tag_row = db.execute(
+                    text("SELECT id FROM tags WHERE name = :name"),
+                    {"name": tag}
+                ).fetchone()
+
+                if tag_row:
+                    tag_id = tag_row[0]
+                else:
+                    new_tag = db.execute(
+                        text("INSERT INTO tags (name) VALUES (:name) RETURNING id"),
+                        {"name": tag}
+                    ).fetchone()
+                    tag_id = new_tag[0]
+
+                db.execute(
+                    text("""
+                        INSERT INTO post_tags (post_id, tag_id)
+                        VALUES (:post_id, :tag_id)
+                    """),
+                    {"post_id": post_id, "tag_id": tag_id}
+                )
 
         db.commit()
-        return {"message": "SUCCESS", "status_code": 201, "data": {"post_id": post_id, "created_at": str(post[1])}}
+
+        return {
+            "message": "SUCCESS",
+            "status_code": 201,
+            "data": {
+                "post_id": post_id,
+                "created_at": str(post[1])
+            }
+        }
+
     except HTTPException:
         db.rollback()
         raise
     except Exception as e:
         db.rollback()
         raise HTTPException(500, f"게시글 등록 중 오류가 발생했습니다: {str(e)}")
-
+# ==========================================================
+# 📝 커뮤니티 - 게시물 상세 조회
+# ==========================================================
 @app.get("/community/posts/{post_id}", status_code=200)
 def get_post_detail(post_id: int, db: Session = Depends(get_db)):
-    post = db.execute(text("""
-        SELECT p.id, p.title, p.body, p.author_id, p.subject_id, p.region_id, p.created_at,
-        u.name AS author_name, s.name AS subject_name, r.name AS region_name
-        FROM posts p
-        JOIN users u ON p.author_id = u.id
-        JOIN subjects s ON p.subject_id = s.id
-        LEFT JOIN regions r ON p.region_id = r.id
-        WHERE p.id = :pid
-    """), {"pid": post_id}).fetchone()
-    if not post: raise HTTPException(404, "POST_NOT_FOUND")
-    
-    answers_result = db.execute(text("""
-        SELECT a.id, a.author_id, a.body, a.is_accepted, a.created_at, u.name AS author_name
-        FROM answers a JOIN users u ON a.author_id = u.id
-        WHERE a.post_id = :pid ORDER BY a.created_at ASC
-    """), {"pid": post_id}).fetchall()
-    
-    answers = [{"id": r[0], "author_id": r[1], "author_name": r[5], "body": r[2], "is_accepted": r[3], "created_at": str(r[4])} for r in answers_result]
-    
-    return {
-        "message": "SUCCESS", "status_code": 200,
-        "data": {
-            "id": post[0], "title": post[1], "body": post[2], "author_id": post[3],
-            "author_name": post[7], "subject_id": post[4], "subject_name": post[8],
-            "region_id": post[5], "region_name": post[9], "created_at": str(post[6]), "answers": answers
-        }
-    }
+    """게시글 상세 조회"""
 
-@app.post("/community/posts/{post_id}/answers", status_code=201)
-def create_answer(post_id: int, req: CreateAnswerRequest, db: Session = Depends(get_db)):
     try:
-        if not db.execute(text("SELECT id FROM posts WHERE id = :pid"), {"pid": post_id}).fetchone():
+        post = db.execute(text("""
+            SELECT 
+                p.id, p.title, p.body, p.author_id, p.subject_id, p.region_id, p.created_at,
+                u.name AS author_name,
+                s.name AS subject_name,
+                r.name AS region_name
+            FROM posts p
+            JOIN users u ON p.author_id = u.id
+            JOIN subjects s ON p.subject_id = s.id
+            LEFT JOIN regions r ON p.region_id = r.id
+            WHERE p.id = :pid
+        """), {"pid": post_id}).fetchone()
+
+        if not post:
             raise HTTPException(404, "POST_NOT_FOUND")
-        if not db.execute(text("SELECT id FROM users WHERE id = :aid"), {"aid": req.author_id}).fetchone():
+
+        answers_result = db.execute(text("""
+            SELECT 
+                a.id, a.author_id, a.body, a.is_accepted, a.created_at,
+                u.name AS author_name
+            FROM answers a
+            JOIN users u ON a.author_id = u.id
+            WHERE a.post_id = :pid
+            ORDER BY a.created_at ASC
+        """), {"pid": post_id}).fetchall()
+
+        answers = []
+        for row in answers_result:
+            answers.append({
+                "id": row[0],
+                "author_id": row[1],
+                "author_name": row[5],
+                "body": row[2],
+                "is_accepted": row[3],
+                "created_at": str(row[4])
+            })
+
+        return {
+            "message": "SUCCESS",
+            "status_code": 200,
+            "data": {
+                "id": post[0],
+                "title": post[1],
+                "body": post[2],
+                "author_id": post[3],
+                "author_name": post[7],
+                "subject_id": post[4],
+                "subject_name": post[8],
+                "region_id": post[5],
+                "region_name": post[9],
+                "created_at": str(post[6]),
+                "answers": answers
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"게시글 조회 중 오류 발생: {str(e)}")
+
+# ==========================================================
+# 📝 커뮤니티 - 댓글(답변) 등록
+# ==========================================================
+@app.post("/community/posts/{post_id}/answers", status_code=201)
+def create_answer(
+    post_id: int = Path(...),
+    req: CreateAnswerRequest = Depends(),
+    db: Session = Depends(get_db)
+):
+    """특정 게시물에 댓글(답변) 등록"""
+
+    try:
+        post_check = db.execute(
+            text("SELECT id FROM posts WHERE id = :post_id"),
+            {"post_id": post_id}
+        ).fetchone()
+
+        if not post_check:
+            raise HTTPException(404, "POST_NOT_FOUND")
+
+        author_check = db.execute(
+            text("SELECT id FROM users WHERE id = :author_id"),
+            {"author_id": req.author_id}
+        ).fetchone()
+
+        if not author_check:
             raise HTTPException(404, "USER_NOT_FOUND")
+
         if not req.body or req.body.strip() == "":
             raise HTTPException(400, "INVALID_INPUT")
 
         result = db.execute(text("""
             INSERT INTO answers (post_id, author_id, body, is_accepted, created_at)
-            VALUES (:pid, :aid, :body, false, NOW()) RETURNING id, post_id, author_id, body, is_accepted, created_at
-        """), {"pid": post_id, "aid": req.author_id, "body": req.body})
+            VALUES (:post_id, :author_id, :body, false, NOW())
+            RETURNING id, post_id, author_id, body, is_accepted, created_at
+        """), {
+            "post_id": post_id,
+            "author_id": req.author_id,
+            "body": req.body
+        })
+
         db.commit()
         answer = result.fetchone()
-        return {"message": "SUCCESS", "status_code": 201, "data": {"answer_id": answer.id, "post_id": answer.post_id, "author_id": answer.author_id, "body": answer.body, "is_accepted": answer.is_accepted, "created_at": str(answer.created_at)}}
+
+        return {
+            "message": "SUCCESS",
+            "status_code": 201,
+            "data": {
+                "answer_id": answer.id,
+                "post_id": answer.post_id,
+                "author_id": answer.author_id,
+                "body": answer.body,
+                "is_accepted": answer.is_accepted,
+                "created_at": str(answer.created_at)
+            }
+        }
+
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(500, f"댓글 등록 중 오류: {str(e)}")
+        raise HTTPException(500, detail=f"댓글 등록 중 오류: {str(e)}")
+
+
+
 
 # ==========================================================
 # 🏆 [KEY] 답변 채택 API (accepted_count 컬럼 업데이트 로직 포함)
