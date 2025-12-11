@@ -1791,13 +1791,10 @@ class ResumeBlockUpdateRequest(BaseModel):
 def update_resume_block(
     block_id: int,
     req: ResumeBlockUpdateRequest,
-    db: Session = Depends(get_db),
-    current_user_id: int = Query(..., description="현재 로그인한 사용자 ID")
-):
+    db: Session = Depends(get_db),):
     """
-    이력서 블록 수정 (튜터 본인만 수정 가능)
+    이력서 블록 수정
     """
-
     try:
         # 1) 블록 존재 여부 확인 + tutor_id 가져오기
         block = db.execute(text("""
@@ -1810,10 +1807,6 @@ def update_resume_block(
             raise HTTPException(404, "BLOCK_NOT_FOUND")
 
         tutor_id = block.tutor_id
-
-        # 2) 현재 로그인한 사용자가 해당 블록의 주인인지 확인
-        if tutor_id != current_user_id:
-            raise HTTPException(403, "NO_PERMISSION")
 
         # 3) 업데이트할 필드만 동적으로 생성
         update_fields = []
@@ -1873,6 +1866,7 @@ def update_resume_block(
     except Exception as e:
         db.rollback()
         raise HTTPException(500, f"INTERNAL_SERVER_ERROR: {str(e)}")
+    
 # ==========================================================
 # 📝 이력서 블록 추가 API (수정 버전)
 # ==========================================================
