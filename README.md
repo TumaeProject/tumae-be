@@ -13,8 +13,6 @@ FastAPI 기반의 코딩 과외 매칭 플랫폼 백엔드 시스템입니다. �
 - **API 문서**: https://tumae-jeonga.onrender.com/docs
 - **사용 방법**: 아래의 [완전한 API 테스트 가이드](#-완전한-api-테스트-가이드)를 따라하세요
 
-
-
 ---
 
 ## 📋 목차
@@ -31,7 +29,7 @@ FastAPI 기반의 코딩 과외 매칭 플랫폼 백엔드 시스템입니다. �
 
 ```
 tumae-backend/
-├── main.py              # 🔥 FastAPI 메인 애플리케이션 파일
+├── main.py              # 🔥 FastAPI 메인 애플리케이션 파일 
 ├── render.yaml          # Render 배포 설정 파일
 ├── requirements.txt     # Python 패키지 의존성 목록
 ├── runtime.txt          # Python 버전 명시 (3.12.7)
@@ -43,6 +41,7 @@ tumae-backend/
 ### 주요 파일
 
 #### `main.py` ⭐ **핵심 파일**
+
 - **API 엔드포인트**: 29개
 - **주요 기능**:
   - 인증 시스템 (JWT, Bcrypt)
@@ -458,18 +457,29 @@ tag=python&sort=popular
 
 **엔드포인트**: `POST /community/posts/{post_id}/answers`
 
-**Request**:
-- Path parameter: `post_id` = 501
+**Path Parameter**:
+- `post_id` = 501
 
-```json
-{
-  "author_id": 1235,
-  "body": "리스트(list)는 대괄호[]로 정의하며 수정 가능(mutable)합니다. 튜플(tuple)은 소괄호()로 정의하며 수정 불가능(immutable)합니다. \n\n예시:\nmy_list = [1, 2, 3]\nmy_list[0] = 10  # 가능\n\nmy_tuple = (1, 2, 3)\nmy_tuple[0] = 10  # 에러 발생"
-}
+**Query Parameters**:
+- `author_id` = 1235 (튜터의 user_id)
+- `body` = 리스트(list)는 대괄호[]로 정의하며 수정 가능(mutable)합니다. 튜플(tuple)은 소괄호()로 정의하며 수정 불가능(immutable)합니다.
+
+**Swagger UI에서 입력 방법**:
+1. Path parameter `post_id`에 501 입력
+2. Query parameter `author_id`에 1235 입력
+3. Query parameter `body`에 답변 내용 입력
+
+**예시 body 내용**:
 ```
+리스트(list)는 대괄호[]로 정의하며 수정 가능(mutable)합니다. 튜플(tuple)은 소괄호()로 정의하며 수정 불가능(immutable)합니다.
 
-**필드 설명**:
-- `author_id`: 답변 작성자의 user_id (주로 튜터)
+예시:
+my_list = [1, 2, 3]
+my_list[0] = 10  # 가능
+
+my_tuple = (1, 2, 3)
+my_tuple[0] = 10  # 에러 발생
+```
 
 **응답**: `answer_id` 기억하기 (예: 601)
 
@@ -789,7 +799,7 @@ tag=python&sort=popular
 | POST | `/community/posts` | 게시글 작성 | ✅ (body - author_id) |
 | GET | `/community/posts` | 게시글 목록 | ❌ |
 | GET | `/community/posts/{post_id}` | 게시글 상세 | ❌ |
-| POST | `/community/posts/{post_id}/answers` | 답변 작성 | ✅ (body - author_id) |
+| POST | `/community/posts/{post_id}/answers` | 답변 작성 | ✅ (query - author_id, body) |
 | PATCH | `/community/answers/{answer_id}/accept` | 답변 채택 | ✅ (body) |
 
 ### **쪽지함 (Messages) - 8개**
@@ -931,13 +941,5 @@ tag=python&sort=popular
 **원인**: JSON 형식으로 입력 시도
 **해결**: Swagger UI에서 각 필드를 개별적으로 입력 (Form Data 방식)
 
----
-
-## 📞 문의
-
-- **GitHub**: https://github.com/JeongAA/tumae-backend
-- **이메일**: your-email@example.com
-
----
 
 **프로젝트 상태**: ✅ 정상 운영 중 | 마지막 업데이트: 2025년 12월
