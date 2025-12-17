@@ -89,6 +89,61 @@ tumae-backend/
 - CRUD 기능
 - 블록별 맞춤 필드 검증
 
+
+
+
+### 나머지 파일 설명
+
+
+---
+
+#### **`requirements.txt`**
+- **역할**: 프로젝트에 필요한 Python 패키지 목록
+- **주요 패키지**: 
+  - `fastapi==0.104.1` - 웹 프레임워크
+  - `uvicorn==0.24.0` - 서버
+  - `sqlalchemy==2.0.23` - 데이터베이스 ORM
+  - `psycopg2-binary==2.9.9` - PostgreSQL 연결
+  - `python-jose==3.3.0` - JWT 토큰
+  - `passlib==1.7.4` - 비밀번호 암호화
+- **사용법**: `pip install -r requirements.txt`
+
+---
+
+#### **`runtime.txt`**
+- **역할**: Render.com 배포 시 사용할 Python 버전 지정
+- **내용**: `python-3.12.7`
+- **목적**: 로컬과 배포 환경의 Python 버전 일치
+
+---
+
+#### **`start.py`**
+- **역할**: 서버 시작 스크립트
+- **기능**: uvicorn으로 main.py의 FastAPI 앱 실행
+- **실행**: `python start.py`
+
+---
+
+#### **`render.yaml`**
+- **역할**: Render.com 클라우드 배포 자동화 설정
+- **기능**: 
+  - 빌드 명령어 지정 (`pip install -r requirements.txt`)
+  - 시작 명령어 지정 (`python start.py`)
+  - 환경변수 설정
+- **배포 흐름**: GitHub 푸시 → Render 자동 배포
+
+---
+
+#### **`student_data_korea_500.json`**
+- **역할**: 학생 더미 데이터 (테스트용)
+- **개수**: 500명의 학생 정보
+- **용도**: 개발/테스트 환경에서 샘플 데이터 생성
+
+---
+
+#### **`teacher_data.json`**
+- **역할**: 튜터 더미 데이터 (테스트용)
+- **용도**: 튜터 목록 및 매칭 시스템 테스트
 ---
 
 ## 🛠 기술 스택
