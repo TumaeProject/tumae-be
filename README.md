@@ -1,4 +1,4 @@
-# Tumae API - 코딩 과외 매칭 플랫폼 백엔드(jeonga 브랜치 메인)
+# Tumae API - 코딩 과외 매칭 플랫폼 백엔드(jeonga 브랜치확인)
 
 FastAPI 기반의 코딩 과외 매칭 플랫폼 백엔드 시스템입니다. 학생과 튜터를 연결하고, 커뮤니티, 쪽지함, 이력서 관리 등의 기능을 제공합니다.
 
@@ -33,11 +33,6 @@ FastAPI 기반의 코딩 과외 매칭 플랫폼 백엔드 시스템입니다. �
 
 ```
 tumae-backend/
-├── __pycache__/          # Python 캐시 파일 (자동 생성)
-├── app/                  # 애플리케이션 메인 디렉토리(로컬테스트용)
-├── venv/                 # Python 가상환경 (자동 생성, Git 제외)
-├── .gitignore           # Git 제외 파일 목록
-├── .env.example         # 환경 변수 예시 파일
 ├── main.py              # 🔥 FastAPI 메인 애플리케이션 파일!!
 ├── render.yaml          # Render 배포 설정 파일
 ├── requirements.txt     # Python 패키지 의존성 목록
@@ -126,16 +121,6 @@ services:
 - Render.com 배포 설정
 - 빌드 및 시작 명령어 정의
 
-#### `.env.example` (Git에 포함)
-```env
-DATABASE_URL=postgresql://username:password@host:5432/database
-SECRET_KEY=your-secret-key-here
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-REFRESH_TOKEN_EXPIRE_DAYS=7
-```
-- 환경 변수 템플릿
-- 실제 `.env` 파일은 Git에서 제외됨
 
 #### `.gitignore`
 ```gitignore
@@ -251,6 +236,7 @@ __pycache__/
 
 ## 🌐 배포 환경에서 API 테스트
 
+
 ### **1단계: API 문서 접속**
 
 브라우저에서 다음 URL 접속:
@@ -259,6 +245,7 @@ __pycache__/
 ### **2단계: API 테스트 실습**
 
 #### **시나리오 1: 학생 회원가입 및 로그인**
+(빠른 테스트용 학생 ID: 1030, 선생님 ID: 1031)
 
 1. **회원가입** - `POST /auth/signup` 클릭
    - "Try it out" 버튼 클릭
