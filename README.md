@@ -272,14 +272,9 @@ __pycache__/
      "password": "password123"
    }
    ```
-   - 응답에서 `access_token` 복사
 
-3. **인증 설정**
-   - 상단 "Authorize" 버튼 클릭
-   - Bearer Token에 access_token 붙여넣기
-   - "Authorize" 클릭
 
-4. **학생 프로필 등록** - `PATCH /auth/students/details`
+3. **학생 프로필 등록** - `PATCH /auth/students/details`
    ```json
    {
      "subjects": [1, 2],
