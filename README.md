@@ -334,7 +334,7 @@ tumae-backend/
 - Query Parameters:
   - `limit`: 10 (최대 10명)
 
-**설명**: 평점과 경력을 기준으로 상위 튜터 조회
+**설명**: 커뮤니티 채택 답변이 많은 튜터 목록을 반환환
 
 #### **2-2. 튜터 목록 조회 (학생용)**
 
@@ -377,6 +377,8 @@ subjects=1&regions=1&hourly_rate_max=40000&sort=rating_desc
 
 **엔드포인트**: `GET /api/students`
 
+-tutor_id 입력
+
 **필터 옵션**:
 - `subjects`: 1
 - `regions`: 1
@@ -384,7 +386,10 @@ subjects=1&regions=1&hourly_rate_max=40000&sort=rating_desc
 - `lesson_types`: 1
 - `goals`: 1
 - `limit`: 20
-- `offset`: 0
+- `offset: 0
+
+-그냥 Excute 눌러도 tutor 프로필 기준으로 매칭됨
+
 
 #### **2-5. 학생 상세 조회**
 
