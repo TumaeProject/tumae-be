@@ -10,7 +10,7 @@ FastAPI 기반의 코딩 과외 매칭 플랫폼 백엔드 시스템입니다. �
 
 **설치 없이 브라우저에서 바로 테스트:**
 - **API 문서**: https://tumae-jeonga.onrender.com/docs
-- **실행 방법**: 위 링크 클릭 → Swagger UI에서 API 테스트
+- **실행 방법**: 위 링크 클릭 → Swagger UI에서 API 테스트 (아래에 배포된 환경에서 API 테스트 참고하시면 됩니다.)
 
 
 
@@ -255,8 +255,7 @@ __pycache__/
 
 브라우저에서 다음 URL 접속:
 - **Swagger UI**: https://tumae-jeonga.onrender.com/docs
-- **ReDoc**: https://tumae-jeonga.onrender.com/redoc
-- 
+ 
 ### **2단계: API 테스트 실습**
 
 #### **시나리오 1: 학생 회원가입 및 로그인**
