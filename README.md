@@ -11,7 +11,7 @@ FastAPI 기반의 코딩 과외 매칭 플랫폼 백엔드 시스템입니다. �
 **설치 없이 브라우저에서 바로 테스트:**
 - **API 문서**: https://tumae-jeonga.onrender.com/docs
 - **실행 방법**: 위 링크 클릭 → Swagger UI에서 API 테스트
-- **소요 시간**: 0분 (즉시)
+
 
 
 ---
@@ -34,11 +34,11 @@ FastAPI 기반의 코딩 과외 매칭 플랫폼 백엔드 시스템입니다. �
 ```
 tumae-backend/
 ├── __pycache__/          # Python 캐시 파일 (자동 생성)
-├── app/                  # 애플리케이션 메인 디렉토리
+├── app/                  # 애플리케이션 메인 디렉토리(로컬테스트용)
 ├── venv/                 # Python 가상환경 (자동 생성, Git 제외)
 ├── .gitignore           # Git 제외 파일 목록
 ├── .env.example         # 환경 변수 예시 파일
-├── main.py              # 🔥 FastAPI 메인 애플리케이션 파일 (2,088줄)
+├── main.py              # 🔥 FastAPI 메인 애플리케이션 파일!!
 ├── render.yaml          # Render 배포 설정 파일
 ├── requirements.txt     # Python 패키지 의존성 목록
 ├── runtime.txt          # Python 버전 명시 (3.12.7)
@@ -50,7 +50,6 @@ tumae-backend/
 ### 주요 파일 상세 설명
 
 #### `main.py` ⭐ **핵심 파일**
-- **크기**: 2,088줄
 - **역할**: FastAPI 애플리케이션의 전체 로직
 - **포함 내용**:
   ```python
