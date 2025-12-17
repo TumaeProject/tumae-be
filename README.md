@@ -600,7 +600,7 @@ my_tuple[0] = 10  # 에러 발생
 **엔드포인트**: `PATCH /messages/{message_id}/star`
 
 - Path parameter: `message_id` = 701
-
+- Query parameter: `user_id` = 1234
 ```json
 {
   "user_id": 1234
@@ -628,6 +628,7 @@ my_tuple[0] = 10  # 에러 발생
 **엔드포인트**: `DELETE /messages/{message_id}`
 
 - Path parameter: `message_id` = 701
+- Query parameter: `user_id` = 1234
 
 ```json
 {
